@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "cobblemonguard",
+  "version": "${version}",
+  "name": "CobblemonGUARD",
+  "description": "Sincroniza inventario, mochilas (Sophisticated Backpacks) y PC de Cobblemon con MySQL, con coordinacion cross-server via Redis. Alternativa a CobbledSync.",
+  "authors": [
+    "CobblemonGUARD"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "main": [
+      {
+        "adapter": "kotlin",
+        "value": "com.cobblemonguard.CobblemonGuard"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "fabric-language-kotlin": ">=1.12.3+kotlin.2.0.21",
+    "cobblemon": ">=1.8.0",
+    "minecraft": "~1.21.1"
+  },
+  "suggests": {
+    "sophisticatedbackpacks": "*",
+    "accessories": "*",
+    "impactor": "*",
+    "luckperms": "*"
+  }
+}

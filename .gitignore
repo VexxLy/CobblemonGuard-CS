@@ -1,0 +1,30 @@
+# ── Build / Gradle ──────────────────────────────
+build/
+bin/
+.gradle/
+.kotlin/
+out/
+*.class
+
+# ── IDE ─────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# ── SECRETOS: config con credenciales MySQL y webhook de Discord ──
+# Solo la carpeta config/ del RAÍZ (credenciales), NO el paquete de código src/.../config/
+/config/
+*.log
+
+# ── JARs gigantes de referencia (Cobblemon 130MB, Trinkets) ──
+libs/
+
+# ── Mods DESCOMPILADOS usados solo como referencia (no son código del mod) ──
+CobblemonMod/
+backpack/
+
+# ── Servidor de pruebas / runtime ───────────────
+run/
