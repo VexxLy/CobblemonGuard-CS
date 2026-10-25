@@ -31,9 +31,18 @@ object ReflectCache {
     /** Busca (y cachea) un método público por nombre + cantidad de parámetros. */
     fun method(cls: Class<*>, name: String, paramCount: Int): Method? {
         val key = "${cls.name}#$name/$paramCount"
-        return methods.getOrPut(key) {
-            cls.methods.firstOrNull { it.name == name && it.parameterCount == paramCount }
-        }
+        return cachear(key) { cls.methods.firstOrNull { it.name == name && it.parameterCount == paramCount } }
+    }
+
+    /**
+     * getOrPut de Kotlin sobre un ConcurrentHashMap hace putIfAbsent(key, null) cuando no
+     * encuentra nada, y ConcurrentHashMap no acepta null: un método inexistente tiraba
+     * NullPointerException en vez de devolver null. Los "no encontrado" no se cachean.
+     */
+    private fun cachear(key: String, buscar: () -> Method?): Method? {
+        methods[key]?.let { return it }
+        val m = buscar() ?: return null
+        return methods.putIfAbsent(key, m) ?: m
     }
 
     /**
@@ -48,7 +57,7 @@ object ReflectCache {
      */
     fun method(cls: Class<*>, name: String, paramCount: Int, extraMatch: (Method) -> Boolean): Method? {
         val key = "${cls.name}#$name/$paramCount/typed"
-        return methods.getOrPut(key) {
+        return cachear(key) {
             cls.methods.firstOrNull { it.name == name && it.parameterCount == paramCount && extraMatch(it) }
         }
     }
@@ -56,8 +65,8 @@ object ReflectCache {
     /** Busca (y cachea) un constructor público por tipos de parámetro exactos. */
     fun constructor(cls: Class<*>, vararg paramTypes: Class<*>): Constructor<*>? {
         val key = cls.name + "#<init>(" + paramTypes.joinToString(",") { it.name } + ")"
-        return ctors.getOrPut(key) {
-            runCatching { cls.getConstructor(*paramTypes) }.getOrNull()
-        }
+        ctors[key]?.let { return it }
+        val c = runCatching { cls.getConstructor(*paramTypes) }.getOrNull() ?: return null
+        return ctors.putIfAbsent(key, c) ?: c
     }
 }

@@ -92,6 +92,14 @@ object PlayerEventHandler {
     private val dataLoaded = ConcurrentHashMap.newKeySet<UUID>()
 
     /**
+     * uuid -> cuándo empezó su carga. Lo vigila [vigilarCargas]: una carga que no termina ni
+     * expulsa en un tiempo razonable deja al jugador congelado para siempre sin que nada lo
+     * diga (pasó en producción: 2 minutos congelado y ni una línea en el log).
+     */
+    private val cargaDesde = ConcurrentHashMap<UUID, Long>()
+    private var ticksVigilancia = 0
+
+    /**
      * Unico punto donde un jugador pasa a estar "cargado".
      *
      * Antes esto era un `dataLoaded.add(uuid)` suelto repetido en cuatro lugares. Se
@@ -101,6 +109,7 @@ object PlayerEventHandler {
      * adivinarlo con temporizadores.
      */
     private fun markLoaded(player: ServerPlayerEntity) {
+        cargaDesde.remove(player.uuid)
         dataLoaded.add(player.uuid)
         GuardApi.fireDataLoaded(player)
     }
@@ -389,7 +398,8 @@ object PlayerEventHandler {
             uuid, name,
             blob[DataType.INVENTORY], blob[DataType.ENDERCHEST], blob[DataType.PC],
             blob[DataType.PARTY], blob[DataType.ACCESSORIES], blob[DataType.BACKPACKS],
-            blob[DataType.ECONOMY]
+            blob[DataType.ECONOMY], blob[DataType.QUESTS], blob[DataType.POKEDEX],
+            blob[DataType.MOCHILA]
         )
     }
 
@@ -399,7 +409,8 @@ object PlayerEventHandler {
             uuid, name,
             blob[DataType.INVENTORY], blob[DataType.ENDERCHEST], blob[DataType.PC],
             blob[DataType.PARTY], blob[DataType.ACCESSORIES], blob[DataType.BACKPACKS],
-            blob[DataType.ECONOMY]
+            blob[DataType.ECONOMY], blob[DataType.QUESTS], blob[DataType.POKEDEX],
+            blob[DataType.MOCHILA]
         )
     }
 
@@ -452,11 +463,20 @@ object PlayerEventHandler {
                 processed++
             }
 
+            if (++ticksVigilancia >= 20) {
+                ticksVigilancia = 0
+                vigilarCargas(server)
+            }
+
             if (pendingLoad.isEmpty()) return@register
             val toLoad = pendingLoad.toSet()
             pendingLoad.clear()
             for (uuid in toLoad) {
-                val player = server.playerManager.getPlayer(uuid) ?: continue
+                val player = server.playerManager.getPlayer(uuid)
+                if (player == null) {
+                    CobblemonGuard.logger.warn("[JOIN] $uuid entró pero ya no está en la lista de jugadores; no se carga.")
+                    continue
+                }
                 loadPlayerDataAsync(player)
             }
         }
@@ -522,9 +542,37 @@ object PlayerEventHandler {
         return CobblemonGuard.database.isConnected()
     }
 
+    /**
+     * Expulsa a quien lleva demasiado tiempo cargando. El límite es la suma de todas las esperas
+     * legítimas de la carga (guardado anterior, BD, lock de otro backend, Redis caído) más
+     * margen: pasado eso, la carga está trabada y no va a terminar sola.
+     */
+    private fun vigilarCargas(server: net.minecraft.server.MinecraftServer) {
+        if (cargaDesde.isEmpty()) return
+        val cfg = CobblemonGuard.config
+        val limite = PENDING_SAVE_WAIT_MS + DB_WAIT_MS + cfg.crossServerWaitTimeoutMs +
+            cfg.esperaSinRedisMsEffective + 30_000L
+        val ahora = System.currentTimeMillis()
+        for ((uuid, desde) in cargaDesde.entries.toList()) {
+            if (ahora - desde < limite) continue
+            cargaDesde.remove(uuid)
+            if (uuid in dataLoaded) continue
+            val player = server.playerManager.getPlayer(uuid) ?: continue
+            CobblemonGuard.logger.error(
+                "[JOIN] La carga de ${player.gameProfile.name} no terminó en ${limite / 1000}s y se lo expulsa. " +
+                "Nada suyo se guardó. Revisa los errores de arriba (MySQL lenta, Redis, o una excepción en la carga)."
+            )
+            expulsar(player,
+                "§fLa carga de tus datos tardó demasiado.",
+                "§7Vuelve a entrar. Si se repite, avisa a un admin.")
+        }
+    }
+
     private fun loadPlayerDataAsync(player: ServerPlayerEntity) {
         val uuid = player.uuid
         val name = player.name.string
+        cargaDesde[uuid] = System.currentTimeMillis()
+        CobblemonGuard.logger.info("[JOIN] Cargando datos de $name desde MySQL...")
 
         // joinExecutor, NO dbExecutor: acá abajo hay esperas de hasta 30s (BD) + 8s
         // (lock cross-server) y no deben ocupar los hilos que hacen el trabajo real.
@@ -729,7 +777,8 @@ object PlayerEventHandler {
                             val tipoEjemplo = when (fallidos.first()) {
                                 DataType.INVENTORY -> "inv"; DataType.ENDERCHEST -> "ender"; DataType.PC -> "pc"
                                 DataType.PARTY -> "party"; DataType.ACCESSORIES -> "acc"; DataType.BACKPACKS -> "bp"
-                                DataType.ECONOMY -> "eco"
+                                DataType.ECONOMY -> "eco"; DataType.QUESTS -> "misiones"; DataType.POKEDEX -> "pokedex"
+                                DataType.MOCHILA -> "mochila"
                             }
                             dbExecutor.submit {
                                 runCatching { CobblemonGuard.repository.logSync(uuid, name, "LOAD", false, "No se pudo aplicar: $lista") }
@@ -805,7 +854,10 @@ object PlayerEventHandler {
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable y no Exception: un Error (NoClassDefFoundError, StackOverflowError,
+                // un fallo de TLS que sube como Error) se lo tragaba en silencio el FutureTask
+                // del executor, y el jugador quedaba congelado sin explicación.
                 CobblemonGuard.logger.error("[JOIN] Error procesando datos de $name: ${e.message}", e)
                 // Se EXPULSA, no se descongela. Ver el comentario de expulsar(): descongelarlo
                 // aca lo dejaba jugando con el playerdata local de este backend y sin guardar
@@ -827,6 +879,7 @@ object PlayerEventHandler {
         ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
             val player = handler.player
             pendingLoad.remove(player.uuid)
+            cargaDesde.remove(player.uuid)
             // clear(player), no clear(uuid): además de sacarlo del set QUITA el Slowness,
             // para que no quede guardado en su playerdata si se desconectó congelado.
             FreezeScreen.clear(player)

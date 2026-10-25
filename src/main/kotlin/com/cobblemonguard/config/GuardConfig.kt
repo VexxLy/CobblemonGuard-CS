@@ -63,6 +63,22 @@ data class GuardConfig(
     // Sincronizar saldos de Impactor (economía). No hace nada si Impactor no está instalado.
     val syncEconomy: Boolean = true,
 
+    // Sincronizar el progreso de FTB Quests (misiones hechas, tareas y recompensas
+    // reclamadas) del equipo PERSONAL del jugador. No hace nada si FTB Quests no está
+    // instalado. Los grupos (/ftbteams party) NO se sincronizan: su progreso queda local
+    // en cada backend. Nullable por la misma razón que expulsarSiFallaAlCargar: un
+    // config.json viejo no trae la clave y Gson la pondría en false.
+    val syncFtbQuests: Boolean? = null,
+
+    // Sincronizar la Pokédex de Cobblemon (vistos/capturados/formas/variocolor). Nullable por
+    // lo mismo que syncFtbQuests: un config.json viejo no trae la clave.
+    val syncPokedex: Boolean? = null,
+
+    // Mochila de CobbleMMO (contenido + nivel, una por jugador). Nullable por lo mismo que
+    // syncFtbQuests: un config.json viejo no trae la clave y tiene que valer true. Sin
+    // cobblemmo-server en el backend, el tipo se omite solo.
+    val syncMochilaCobblemmo: Boolean? = null,
+
     // Keys de moneda ("namespace:value") a sincronizar ADEMÁS de las que se logren
     // detectar automáticamente en Impactor (la detección automática usa `registered()`/
     // `all()`, que el propio código marca como NO confirmada contra la API real — ver
@@ -216,6 +232,15 @@ data class GuardConfig(
 ) {
     /** Ver doc de [expulsarSiFallaAlCargar] — úsalo SIEMPRE en vez del campo directo. */
     val expulsarSiFallaAlCargarEffective: Boolean get() = expulsarSiFallaAlCargar ?: true
+
+    /** Ver doc de [syncFtbQuests] — úsalo SIEMPRE en vez del campo directo. */
+    val syncFtbQuestsEffective: Boolean get() = syncFtbQuests ?: true
+
+    /** Ver doc de [syncPokedex] — úsalo SIEMPRE en vez del campo directo. */
+    val syncPokedexEffective: Boolean get() = syncPokedex ?: true
+
+    /** Ver doc de [syncMochilaCobblemmo] — úsalo SIEMPRE en vez del campo directo. */
+    val syncMochilaCobblemmoEffective: Boolean get() = syncMochilaCobblemmo ?: true
 
     val esperaSinRedisMsEffective: Long get() = (esperaSinRedisMs ?: 5_000L).coerceIn(0L, 30_000L)
 

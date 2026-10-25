@@ -28,3 +28,6 @@ backpack/
 
 # ── Servidor de pruebas / runtime ───────────────
 run/
+
+# ── Documentación interna: se queda solo en local ──
+*.md

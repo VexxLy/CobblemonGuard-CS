@@ -227,6 +227,37 @@ object CobblemonStorage {
         }
     }
 
+    private val setPartyReferenceCtor by lazy {
+        runCatching {
+            Class.forName("com.cobblemon.mod.common.net.messages.client.storage.party.SetPartyReferencePacket")
+        }.getOrNull()?.let { ReflectCache.constructor(it, UUID::class.java) }
+    }
+
+    /**
+     * Reenvía el EQUIPO del jugador y vuelve a marcarlo como "su" equipo en el cliente.
+     *
+     * PartyStore.sendTo manda InitializePartyPacket con isThisPlayerParty=false. En el cliente,
+     * ClientStorageManager.createParty(false, uuid, ...) crea un ClientParty NUEVO y lo guarda en
+     * el mapa de stores, pero NO cambia el campo `party`, que es el que dibujan el HUD y la
+     * pantalla del equipo. Desde ahí, cada SetPartyPokemon/actualización de ese uuid va al store
+     * nuevo y el HUD sigue mostrando el viejo: el jugador captura, sube de nivel o evoluciona y no
+     * lo ve hasta reconectar (el dato en el servidor y en MySQL está bien). Cobblemon, al entrar,
+     * manda SetPartyReferencePacket justo después por eso mismo; acá hacemos lo mismo.
+     */
+    fun sendPartyTo(store: Any, player: ServerPlayerEntity) {
+        sendTo(store, player)
+        runCatching {
+            val storeId = ReflectCache.method(store.javaClass, "getUuid", 0)?.invoke(store) as? UUID ?: player.uuid
+            val packet = setPartyReferenceCtor?.newInstance(storeId) ?: run {
+                CobblemonGuard.logger.warn("[Party] SetPartyReferencePacket no existe en esta versión de Cobblemon — el HUD de ${player.name.string} puede quedar desactualizado hasta reconectar.")
+                return@runCatching
+            }
+            ReflectCache.method(packet.javaClass, "sendToPlayer", 1)?.invoke(packet, player)
+        }.onFailure { e ->
+            CobblemonGuard.logger.warn("[Party] No se pudo reenviar la referencia del equipo de ${player.name.string}: ${e.cause?.message ?: e.message}")
+        }
+    }
+
     // ── Stores TEMPORALES + copia al store en vivo ─────────────────────────
     //
     // loadFromNBT sobre el store EN VIVO puebla los datos pero NO notifica al

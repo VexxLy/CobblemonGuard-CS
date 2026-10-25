@@ -43,5 +43,11 @@ object SyncRegistry {
             AccessorySync::serialize) { p, d, _ -> AccessorySync.deserialize(p, d) },
         syncer(DataType.ECONOMY, { cfg.syncEconomy },
             EconomySync::serialize) { p, d, _ -> EconomySync.deserialize(p, d) },
+        syncer(DataType.QUESTS, { cfg.syncFtbQuestsEffective },
+            FtbQuestsSync::serialize) { p, d, _ -> FtbQuestsSync.deserialize(p, d) },
+        syncer(DataType.POKEDEX, { cfg.syncPokedexEffective },
+            PokedexSync::serialize) { p, d, _ -> PokedexSync.deserialize(p, d) },
+        syncer(DataType.MOCHILA, { cfg.syncMochilaCobblemmoEffective },
+            CobbleMmoMochilaSync::serialize) { p, d, _ -> CobbleMmoMochilaSync.deserialize(p, d) },
     )
 }

@@ -381,7 +381,7 @@ object GuardCommand {
     }
 
     private const val TIPOS_VALIDOS = "all, inventario, ender, pc, party, accesorios, mochilas, economia"
-    private val TIPOS_SUGERIDOS = listOf("all", "inventario", "ender", "pc", "party", "accesorios", "mochilas", "economia")
+    private val TIPOS_SUGERIDOS = listOf("all", "inventario", "ender", "pc", "party", "accesorios", "mochila", "sophisticated", "economia", "misiones", "pokedex")
 
     /** Restaura desde los datos actuales de MySQL, solo los tipos indicados. */
     private fun doRestore(src: ServerCommandSource, player: ServerPlayerEntity, tipo: String): Int {
@@ -493,6 +493,9 @@ object GuardCommand {
         DataType.ACCESSORIES -> "trinkets"
         DataType.BACKPACKS -> "backpacks"
         DataType.ECONOMY -> "economy"
+        DataType.QUESTS -> "ftb_quests"
+        DataType.POKEDEX -> "cobblemon_pokedex"
+        DataType.MOCHILA -> "cobblemmo_mochila"
     }
 
     private fun blobDe(backup: BackupRepository.BackupEntry, tipo: DataType): ByteArray? = when (tipo) {
@@ -503,6 +506,9 @@ object GuardCommand {
         DataType.ACCESSORIES -> backup.trinkets
         DataType.BACKPACKS -> backup.backpacks
         DataType.ECONOMY -> backup.economy
+        DataType.QUESTS -> backup.ftbQuests
+        DataType.POKEDEX -> backup.cobblemonPokedex
+        DataType.MOCHILA -> backup.cobblemmoMochila
     }
 
     /** Un tipo solo, o null después de avisar al que escribió el comando. */
@@ -510,7 +516,7 @@ object GuardCommand {
         val types = SyncTypes.parse(tipo)
         if (types == null || types.size != 1) {
             src.sendError(prefix().append(Text.literal(
-                "Tipo inválido. Usa UNO solo: inv, ender, pc, party, acc, bp o eco."
+                "Tipo inválido. Usa UNO solo: inv, ender, pc, party, acc, bp, eco o mis."
             ).formatted(Formatting.RED)))
             return null
         }

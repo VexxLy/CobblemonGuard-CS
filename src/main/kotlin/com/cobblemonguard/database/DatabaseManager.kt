@@ -70,6 +70,9 @@ class DatabaseManager(private val config: GuardConfig) {
                         trinkets       LONGBLOB COMMENT 'Slots de Trinkets/Accessories — mochilas equipadas de Sophisticated Backpacks',
                         backpacks      LONGBLOB COMMENT 'Contenido real de las mochilas SB (mapa uuid->contenido)',
                         economy        LONGBLOB COMMENT 'Saldos de Impactor (texto plano, una moneda por línea)',
+                        ftb_quests     LONGBLOB COMMENT 'Progreso de FTB Quests del equipo personal (NBT comprimido)',
+                        cobblemon_pokedex LONGBLOB COMMENT 'Pokédex de Cobblemon (NBT comprimido, codec de Cobblemon)',
+                        cobblemmo_mochila LONGBLOB COMMENT 'Mochila de CobbleMMO: contenido + nivel (NBT comprimido)',
                         PRIMARY KEY (uuid),
                         INDEX idx_name (player_name)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -89,6 +92,9 @@ class DatabaseManager(private val config: GuardConfig) {
                         trinkets       LONGBLOB,
                         backpacks      LONGBLOB,
                         economy        LONGBLOB,
+                        ftb_quests     LONGBLOB,
+                        cobblemon_pokedex LONGBLOB,
+                        cobblemmo_mochila LONGBLOB,
                         PRIMARY KEY (id),
                         INDEX idx_uuid_time (uuid, saved_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -126,7 +132,7 @@ class DatabaseManager(private val config: GuardConfig) {
             // Ahora se consulta information_schema (estándar, funciona igual en MySQL y
             // MariaDB) y el ALTER se emite solo si realmente falta.
             for (table in listOf("cobblemonguard_players", "cobblemonguard_backups")) {
-                for (col in listOf("trinkets", "cobblemon_party", "backpacks", "economy")) {
+                for (col in listOf("trinkets", "cobblemon_party", "backpacks", "economy", "ftb_quests", "cobblemon_pokedex", "cobblemmo_mochila")) {
                     ensureColumn(conn, table, col, "LONGBLOB")
                 }
             }

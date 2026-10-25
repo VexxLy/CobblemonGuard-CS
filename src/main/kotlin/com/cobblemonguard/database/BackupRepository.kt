@@ -71,12 +71,15 @@ class BackupRepository(private val db: DatabaseManager) {
         cobblemonParty: ByteArray?,
         trinkets: ByteArray?,
         backpacks: ByteArray?,
-        economy: ByteArray? = null
+        economy: ByteArray? = null,
+        ftbQuests: ByteArray? = null,
+        cobblemonPokedex: ByteArray? = null,
+        cobblemmoMochila: ByteArray? = null
     ): Boolean {
         val now = System.currentTimeMillis()
         var fp: String? = null
         if (CobblemonGuard.config.backupDedupEnabledEffective) {
-            fp = fingerprint(listOf(inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy))
+            fp = fingerprint(listOf(inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila))
             val last = lastBackupByPlayer[uuid]
             if (last != null && last.fingerprint == fp && now - last.insertedAtMillis < FORCE_INTERVAL_MS) {
                 CobblemonGuard.logger.debug("[Backup] $playerName sin cambios desde el último backup — no se inserta.")
@@ -86,8 +89,8 @@ class BackupRepository(private val db: DatabaseManager) {
 
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                INSERT INTO cobblemonguard_backups (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO cobblemonguard_backups (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()).use { stmt ->
                 stmt.setString(1, uuid.toString())
                 stmt.setString(2, playerName)
@@ -98,6 +101,9 @@ class BackupRepository(private val db: DatabaseManager) {
                 stmt.setBytes(7, trinkets)
                 stmt.setBytes(8, backpacks)
                 stmt.setBytes(9, economy)
+                stmt.setBytes(10, ftbQuests)
+                stmt.setBytes(11, cobblemonPokedex)
+                stmt.setBytes(12, cobblemmoMochila)
                 stmt.executeUpdate()
             }
         }
@@ -152,7 +158,10 @@ class BackupRepository(private val db: DatabaseManager) {
         val cobblemonParty: ByteArray?,
         val trinkets: ByteArray?,
         val backpacks: ByteArray?,
-        val economy: ByteArray? = null
+        val economy: ByteArray? = null,
+        val ftbQuests: ByteArray? = null,
+        val cobblemonPokedex: ByteArray? = null,
+        val cobblemmoMochila: ByteArray? = null
     )
 
     fun getClosestBackup(uuid: UUID, targetTimeMillis: Long, playerName: String? = null): BackupEntry? {
@@ -171,7 +180,7 @@ class BackupRepository(private val db: DatabaseManager) {
     private fun queryClosestBackup(where: String, vararg params: Any): BackupEntry? {
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                SELECT saved_at, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy
+                SELECT saved_at, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
                 FROM cobblemonguard_backups
                 WHERE $where
                 ORDER BY saved_at DESC
@@ -193,7 +202,10 @@ class BackupRepository(private val db: DatabaseManager) {
                         cobblemonParty = rs.getBytes("cobblemon_party"),
                         trinkets       = rs.getBytes("trinkets"),
                         backpacks      = rs.getBytes("backpacks"),
-                        economy        = rs.getBytes("economy")
+                        economy        = rs.getBytes("economy"),
+                        ftbQuests      = rs.getBytes("ftb_quests"),
+                        cobblemonPokedex = rs.getBytes("cobblemon_pokedex"),
+                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila")
                     )
                 }
             }

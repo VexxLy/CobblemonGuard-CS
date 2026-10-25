@@ -185,7 +185,17 @@ object ImpactorEconomy {
 
             val methodName = if (diff.signum() > 0) "deposit" else "withdraw"
             val amount = diff.abs()
-            val method = ReflectCache.method(acc.javaClass, methodName, 1) ?: return ResultadoSaldo.ERROR
+            // Filtrado por TIPO, no solo por cantidad de parámetros: la cuenta de Impactor (o la de
+            // CobbleDollarsBridge) tiene más de un deposit/withdraw de 1 parámetro, y el primero
+            // que aparecía no recibía un BigDecimal ("argument type mismatch"). Como solo se
+            // llegaba acá cuando el saldo de MySQL difería del local, en las pruebas con saldo
+            // igual nunca saltó; con el primer jugador con plata, lo expulsaba al entrar.
+            val method = ReflectCache.method(acc.javaClass, methodName, 1) {
+                it.parameterTypes[0].isAssignableFrom(BigDecimal::class.java)
+            } ?: run {
+                CobblemonGuard.logger.error("[Economy] La cuenta de Impactor no tiene $methodName(BigDecimal) (${acc.javaClass.name}).")
+                return ResultadoSaldo.ERROR
+            }
             val tx = method.invoke(acc, amount) ?: return ResultadoSaldo.ERROR
             val ok = ReflectCache.method(tx.javaClass, "successful", 0)?.invoke(tx) as? Boolean ?: false
             if (ok) ResultadoSaldo.OK else ResultadoSaldo.ERROR

@@ -42,18 +42,21 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         cobblemonParty: ByteArray?,
         trinkets: ByteArray?,
         backpacks: ByteArray?,
-        economy: ByteArray? = null
+        economy: ByteArray? = null,
+        ftbQuests: ByteArray? = null,
+        cobblemonPokedex: ByteArray? = null,
+        cobblemmoMochila: ByteArray? = null
     ) {
         if (CobblemonGuard.config.identifyByName) {
-            saveByName(uuid, playerName, inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy)
+            saveByName(uuid, playerName, inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila)
             logSync(uuid, playerName, "SAVE", true, null)
             return
         }
         db.getConnection().use { conn ->
             conn.prepareStatement("""
                 INSERT INTO cobblemonguard_players
-                    (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 -- VALUES(col) y no el alias de fila (INSERT ... AS n) que MySQL 8.0.20
                 -- recomienda: ese alias NO existe en MariaDB, y este mod se instala tanto en
                 -- una como en la otra. VALUES() esta deprecado pero funciona en las dos; el
@@ -68,6 +71,9 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     trinkets        = COALESCE(VALUES(trinkets),        trinkets),
                     backpacks       = COALESCE(VALUES(backpacks),       backpacks),
                     economy         = COALESCE(VALUES(economy),         economy),
+                    ftb_quests      = COALESCE(VALUES(ftb_quests),      ftb_quests),
+                    cobblemon_pokedex = COALESCE(VALUES(cobblemon_pokedex), cobblemon_pokedex),
+                    cobblemmo_mochila = COALESCE(VALUES(cobblemmo_mochila), cobblemmo_mochila),
                     last_save       = CURRENT_TIMESTAMP
             """.trimIndent()).use { stmt ->
                 stmt.setString(1, uuid.toString())
@@ -79,6 +85,9 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                 stmt.setBytes(7, trinkets)
                 stmt.setBytes(8, backpacks)
                 stmt.setBytes(9, economy)
+                stmt.setBytes(10, ftbQuests)
+                stmt.setBytes(11, cobblemonPokedex)
+                stmt.setBytes(12, cobblemmoMochila)
                 stmt.executeUpdate()
             }
         }
@@ -92,7 +101,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
     private fun saveByName(
         uuid: UUID, playerName: String,
         inventory: ByteArray?, enderChest: ByteArray?, cobblemonPc: ByteArray?,
-        cobblemonParty: ByteArray?, trinkets: ByteArray?, backpacks: ByteArray?, economy: ByteArray?
+        cobblemonParty: ByteArray?, trinkets: ByteArray?, backpacks: ByteArray?, economy: ByteArray?,
+        ftbQuests: ByteArray?, cobblemonPokedex: ByteArray?, cobblemmoMochila: ByteArray?
     ) {
         db.getConnection().use { conn ->
             val updated = conn.prepareStatement("""
@@ -104,6 +114,9 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     trinkets        = COALESCE(?, trinkets),
                     backpacks       = COALESCE(?, backpacks),
                     economy         = COALESCE(?, economy),
+                    ftb_quests      = COALESCE(?, ftb_quests),
+                    cobblemon_pokedex = COALESCE(?, cobblemon_pokedex),
+                    cobblemmo_mochila = COALESCE(?, cobblemmo_mochila),
                     last_save       = CURRENT_TIMESTAMP
                 WHERE player_name = ?
             """.trimIndent()).use { stmt ->
@@ -114,14 +127,17 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                 stmt.setBytes(5, trinkets)
                 stmt.setBytes(6, backpacks)
                 stmt.setBytes(7, economy)
-                stmt.setString(8, playerName)
+                stmt.setBytes(8, ftbQuests)
+                stmt.setBytes(9, cobblemonPokedex)
+                stmt.setBytes(10, cobblemmoMochila)
+                stmt.setString(11, playerName)
                 stmt.executeUpdate()
             }
             if (updated == 0) {
                 conn.prepareStatement("""
                     INSERT INTO cobblemonguard_players
-                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { stmt ->
                     stmt.setString(1, uuid.toString())
                     stmt.setString(2, playerName)
@@ -132,6 +148,9 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     stmt.setBytes(7, trinkets)
                     stmt.setBytes(8, backpacks)
                     stmt.setBytes(9, economy)
+                    stmt.setBytes(10, ftbQuests)
+                    stmt.setBytes(11, cobblemonPokedex)
+                    stmt.setBytes(12, cobblemmoMochila)
                     stmt.executeUpdate()
                 }
             }
@@ -149,7 +168,10 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         val cobblemonParty: ByteArray?,
         val trinkets: ByteArray?,
         val backpacks: ByteArray?,
-        val economy: ByteArray? = null
+        val economy: ByteArray? = null,
+        val ftbQuests: ByteArray? = null,
+        val cobblemonPokedex: ByteArray? = null,
+        val cobblemmoMochila: ByteArray? = null
     )
 
     fun loadPlayerData(uuid: UUID, playerName: String): PlayerData? {
@@ -175,7 +197,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
     private fun queryPlayerData(where: String, param: String): PlayerData? {
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                SELECT inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy
+                SELECT inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
                 FROM cobblemonguard_players
                 WHERE $where
             """.trimIndent()).use { stmt ->
@@ -189,7 +211,10 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                         cobblemonParty = rs.getBytes("cobblemon_party"),
                         trinkets       = rs.getBytes("trinkets"),
                         backpacks      = rs.getBytes("backpacks"),
-                        economy        = rs.getBytes("economy")
+                        economy        = rs.getBytes("economy"),
+                        ftbQuests      = rs.getBytes("ftb_quests"),
+                        cobblemonPokedex = rs.getBytes("cobblemon_pokedex"),
+                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila")
                     )
                 }
             }
@@ -298,8 +323,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
             try {
                 val copiadas = conn.prepareStatement("""
                     INSERT INTO cobblemonguard_backups
-                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy)
-                    SELECT uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy
+                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
+                    SELECT uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
                     FROM cobblemonguard_players WHERE uuid = ?
                 """.trimIndent()).use { stmt ->
                     stmt.setString(1, uuid.toString())
@@ -421,5 +446,5 @@ class PlayerDataRepository(private val db: DatabaseManager) {
 
 /** Columnas de datos de jugador que `respaldarYReemplazar` acepta. Lista blanca: se interpolan en SQL. */
 private val COLUMNAS_DE_DATOS = setOf(
-    "inventory", "ender_chest", "cobblemon_pc", "cobblemon_party", "trinkets", "backpacks", "economy"
+    "inventory", "ender_chest", "cobblemon_pc", "cobblemon_party", "trinkets", "backpacks", "economy", "ftb_quests", "cobblemon_pokedex", "cobblemmo_mochila"
 )

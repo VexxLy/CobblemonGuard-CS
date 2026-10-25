@@ -90,7 +90,7 @@ object PokemonPartySync {
             // y el getOrElse de abajo lo convierte en FALLO.
             val cambios = CobblemonStorage.mezclarParty(detached, live, registries, esperaPokemon = true)
             val changed = cambios > 0
-            if (changed) CobblemonStorage.sendTo(live, player)
+            if (changed) CobblemonStorage.sendPartyTo(live, player)
             CobblemonGuard.logger.debug("[Party] Restaurado equipo de ${player.name.string} (cambios=$changed).")
             Resultado.APLICADO
         }.getOrElse { e ->
