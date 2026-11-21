@@ -11,12 +11,14 @@ import com.cobblemonguard.sync.EconomySync
 import com.cobblemonguard.sync.Resultado
 import com.cobblemonguard.sync.SyncService
 import com.cobblemonguard.sync.SyncTypes
+import net.fabricmc.fabric.api.event.Event
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
 import net.minecraft.util.Formatting
+import net.minecraft.util.Identifier
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -27,21 +29,21 @@ import java.util.concurrent.TimeUnit
  * salir / apagar / auto-save, y expone la API para los comandos.
  *
  * La presentación (pantallas de "cargando") vive en [FreezeScreen] y la serialización de
- * cada tipo en [SyncService] — aquí solo va la orquestación y las reglas (guards).
+ * cada tipo en [SyncService]: aquí solo va la orquestación y las reglas (guards).
  */
 object PlayerEventHandler {
 
-    // Antes: Executors.newCachedThreadPool — crea un hilo NUEVO por tarea si no hay uno
+    // No es un Executors.newCachedThreadPool: ese crea un hilo NUEVO por tarea si no hay uno
     // libre, SIN TOPE. Bajo alta rotación de jugadores (muchos joins/quits en poco tiempo:
     // reinicio del server con muchos conectados, o un pico de entradas/salidas) esto puede
     // disparar decenas de hilos de golpe. Son daemon y se liberan tras 60s de inactividad,
     // pero la creación/destrucción constante y el overhead de contexto de tantos hilos SÍ
-    // se nota como pérdida gradual de TPS con volumen alto de jugadores — el resto del
+    // se nota como pérdida gradual de TPS con volumen alto de jugadores: el resto del
     // trabajo (DB) ya está acotado por el pool de conexiones MySQL (poolSize); un hilo de
     // más solo espera una conexión libre, no acelera nada.
     //
     // Ahora: pool de tamaño FIJO (con margen para tareas que no tocan MySQL, como el
-    // heartbeat de CrossServerCoordinator o la limpieza de backups) y cola ilimitada — el
+    // heartbeat de CrossServerCoordinator o la limpieza de backups) y cola ilimitada: el
     // trabajo se ENCOLA en vez de crear hilos sin límite. Mantiene el número de hilos
     // estable bajo carga y nunca descarta una tarea. `allowCoreThreadTimeOut` conserva el
     // mismo comportamiento elástico de antes (los hilos se liberan tras 60s sin uso).
@@ -52,11 +54,11 @@ object PlayerEventHandler {
      * [waitForDatabase] (hasta 30s) y [CrossServerCoordinator.awaitRelease] (hasta
      * `crossServerWaitTimeoutMs`, 8s por defecto).
      *
-     * Cuando ambas cosas compartían el [dbExecutor] —que es de tamaño fijo y chico, atado
-     * a `poolSize`— bastaba un pico de reconexiones (reiniciar el proxy, o un backend
+     * Cuando ambas cosas compartían el [dbExecutor] (que es de tamaño fijo y chico, atado
+     * a `poolSize`) bastaba un pico de reconexiones (reiniciar el proxy, o un backend
      * volviendo con la BD lenta) para que TODOS los hilos quedaran dormidos esperando, y
-     * el resto del trabajo real —guardados de disconnect, backups, heartbeat de locks,
-     * refrescos de pasturas— se encolaba detrás de esas esperas.
+     * el resto del trabajo real (guardados de disconnect, backups, heartbeat de locks,
+     * refrescos de pasturas) se encolaba detrás de esas esperas.
      *
      * Este pool puede ser bastante más grande sin costar nada: sus hilos están DORMIDOS,
      * no compiten por CPU. El trabajo de MySQL que hagan después sigue estando acotado por
@@ -77,7 +79,7 @@ object PlayerEventHandler {
 
     /**
      * Permite a otras partes del mod (ej. [com.cobblemonguard.sync.LivePastureSync]) usar
-     * el MISMO pool de hilos de BD en vez de crear uno propio — evita volver a multiplicar
+     * el MISMO pool de hilos de BD en vez de crear uno propio: evita volver a multiplicar
      * pools pequeños, que es justo lo que se acaba de consolidar acá arriba.
      */
     fun submitDbTask(task: () -> Unit) {
@@ -88,7 +90,7 @@ object PlayerEventHandler {
     private val pendingLoad = ConcurrentHashMap.newKeySet<UUID>()
 
     // Jugadores cuyos datos se cargaron correctamente desde MySQL.
-    // SOLO estos son elegibles para guardar — evita sobreescribir datos buenos con vacío.
+    // SOLO estos son elegibles para guardar: evita sobreescribir datos buenos con vacío.
     private val dataLoaded = ConcurrentHashMap.newKeySet<UUID>()
 
     /**
@@ -100,13 +102,12 @@ object PlayerEventHandler {
     private var ticksVigilancia = 0
 
     /**
-     * Unico punto donde un jugador pasa a estar "cargado".
+     * Único punto donde un jugador pasa a estar "cargado".
      *
-     * Antes esto era un `dataLoaded.add(uuid)` suelto repetido en cuatro lugares. Se
-     * centralizo para poder avisarle a los otros mods de la red (via [GuardApi]) en el
-     * mismo instante: cobblemmo-server necesita saber cuando el equipo/PC del jugador ya
-     * son los de MySQL y no los del disco local de este backend, y antes solo podia
-     * adivinarlo con temporizadores.
+     * Está en un solo lugar para poder avisarle a los otros mods de la red (vía [GuardApi]) en
+     * el mismo instante: cobblemmo-server necesita saber cuándo el equipo y la PC del jugador ya
+     * son los de MySQL y no los del disco local de este backend, sin adivinarlo con
+     * temporizadores.
      */
     private fun markLoaded(player: ServerPlayerEntity) {
         cargaDesde.remove(player.uuid)
@@ -149,15 +150,14 @@ object PlayerEventHandler {
     //
     // 1) save → load (reconexión rápida). El LOAD del rejoin espera a que el SAVE anterior
     //    termine antes de leer de MySQL. Sin esto, el SELECT puede correr en otro hilo y
-    //    ganarle al UPDATE, devolviendo el estado ANTERIOR a la última sesión — lo que se
+    //    ganarle al UPDATE, devolviendo el estado ANTERIOR a la última sesión, lo que se
     //    percibe como "se pierden o se duplican ítems" al entrar y salir varias veces:
     //    la reconexión restaura un snapshot viejo ENCIMA de un mundo que ya cambió.
     //
-    // 2) save → save (lo que ANTES no estaba cubierto). Dos guardados del mismo jugador
-    //    encolados con poca diferencia —auto-save + disconnect, o `/cg save all` seguido
-    //    de una desconexión— corrían en hilos distintos del pool, y nada garantizaba en
-    //    qué orden llegaba cada UPSERT a MySQL: el más VIEJO podía ganar y pisar al más
-    //    nuevo. Encadenándolos, el orden de escritura es siempre el de encolado.
+    // 2) save → save. Dos guardados del mismo jugador encolados con poca diferencia
+    //    (auto-save + disconnect, o `/cg save all` seguido de una desconexión) correrían
+    //    en hilos distintos del pool, y nada garantiza en qué orden llega cada UPSERT a
+    //    MySQL: el más VIEJO podría ganar y pisar al más nuevo. Encadenándolos, el orden de escritura es siempre el de encolado.
     private val saveChains = ConcurrentHashMap<UUID, CompletableFuture<Void>>()
     private const val PENDING_SAVE_WAIT_MS = 15_000L
 
@@ -223,9 +223,7 @@ object PlayerEventHandler {
         CobblemonGuard.logger.info("Eventos de jugador registrados.")
     }
 
-    // ══════════════════════════════════════════════════════
     // Persistencia (mapa de tipos → columnas, en un solo lugar)
-    // ══════════════════════════════════════════════════════
 
     /**
      * Vigilancia de la serialización de Pokémon: dos alarmas, porque hay dos formas de romperse.
@@ -234,15 +232,15 @@ object PlayerEventHandler {
      * momento esos Pokémon no se guardan. El COALESCE del repositorio evita que eso vacíe la
      * base, pero los datos quedan congelados en silencio, y "congelado" tarda días en notarse.
      *
-     * - **Global** — falla para TODOS: la reflexión contra Cobblemon se rompió en una versión
+     * - **Global**, falla para TODOS: la reflexión contra Cobblemon se rompió en una versión
      *   nueva (un nombre de clase o de método cambió). Se detecta con fallos seguidos de
      *   cualquier jugador.
-     * - **Por jugador** — falla para ALGUNOS: un Pokémon con una forma o un dato raro que hace
+     * - **Por jugador**, falla para ALGUNOS: un Pokémon con una forma o un dato raro que hace
      *   explotar la serialización de esa PC en particular.
      *
-     * Antes había un único contador global y cualquier guardado bueno lo ponía en cero. Con el
-     * segundo caso eso significaba que la alarma no sonaba NUNCA: alcanzaba con que los demás
-     * jugadores siguieran guardando bien para tapar al que perdía todo.
+     * Con un único contador global que cualquier guardado bueno pone en cero, el segundo caso
+     * no haría sonar la alarma NUNCA: alcanzaría con que los demás jugadores siguieran
+     * guardando bien para tapar al que pierde todo.
      */
     private const val FALLOS_GLOBALES_PARA_ALERTAR = 5
     private const val FALLOS_POR_JUGADOR_PARA_ALERTAR = 3
@@ -259,9 +257,9 @@ object PlayerEventHandler {
         if (!esperaPc && !esperaParty) return
 
         // Sin Cobblemon instalado en ESTE backend (un lobby, un servidor de minijuegos), los
-        // serializadores devuelven null SIEMPRE y con razon. Sin este chequeo la alarma saltaba
-        // en todos esos servidores, y una alarma que grita cuando todo esta bien es una alarma
-        // que se ignora el dia que grita de verdad.
+        // serializadores devuelven null SIEMPRE y con razón. Sin este chequeo la alarma saltaba
+        // en todos esos servidores, y una alarma que grita cuando todo está bien es una alarma
+        // que se ignora el día que grita de verdad.
         if (!CobblemonStorage.isLoaded) return
 
         val faltaPc = esperaPc && blob[DataType.PC] == null
@@ -273,15 +271,15 @@ object PlayerEventHandler {
         }
         val que = if (faltaPc && faltaParty) "PC ni equipo" else if (faltaPc) "la PC" else "el equipo"
 
-        // Modulo y no igualdad: con "== N" la alarma sonaba UNA vez en toda la vida del proceso,
-        // y si nadie miraba la consola en ese instante se perdia entre miles de lineas.
+        // Módulo y no igualdad: con "== N" la alarma sonaba UNA vez en toda la vida del proceso,
+        // y si nadie miraba la consola en ese instante se perdía entre miles de líneas.
         val global = fallosPokemonSeguidos.incrementAndGet()
         if (global % FALLOS_GLOBALES_PARA_ALERTAR == 0) {
             CobblemonGuard.logger.error(
-                "[GUARD] $global guardados seguidos sin poder serializar $que (ultimo: $name). Es casi " +
-                "seguro que la reflexion contra Cobblemon se rompio en esta version. Los datos NO se estan " +
-                "borrando (las columnas se conservan), pero TAMPOCO se estan actualizando: todo cambio de " +
-                "Pokemon se pierde al salir. REVISAR CobblemonStorage."
+                "[GUARD] $global guardados seguidos sin poder serializar $que (último: $name). Es casi " +
+                "seguro que la reflexión contra Cobblemon se rompió en esta versión. Los datos NO se están " +
+                "borrando (las columnas se conservan), pero TAMPOCO se están actualizando: todo cambio de " +
+                "Pokémon se pierde al salir. REVISAR CobblemonStorage."
             )
         }
 
@@ -289,9 +287,9 @@ object PlayerEventHandler {
         if (propio % FALLOS_POR_JUGADOR_PARA_ALERTAR == 0) {
             CobblemonGuard.logger.error(
                 "[GUARD] $name lleva $propio guardados seguidos sin poder serializar $que. Sus cambios de " +
-                "Pokemon NO se estan guardando: su ultimo estado bueno en MySQL es el de antes de que empezara " +
-                "a fallar. Si es solo el, lo mas probable es un Pokemon con datos que Cobblemon no puede " +
-                "escribir: busca el error de [PC]/[Party] de $name mas arriba. Si les pasa a todos, mira la " +
+                "Pokémon NO se están guardando: su último estado bueno en MySQL es el de antes de que empezara " +
+                "a fallar. Si es solo él, lo más probable es un Pokémon con datos que Cobblemon no puede " +
+                "escribir: busca el error de [PC]/[Party] de $name más arriba. Si les pasa a todos, mira la " +
                 "alarma global."
             )
         }
@@ -306,8 +304,8 @@ object PlayerEventHandler {
      * Esperas entre reintentos de un guardado que falló: 2 + 4 + 8 + 15 + 30 s, casi un minuto de
      * espera. A eso se suma lo que tarde cada intento en fallar: con MySQL colgado (no caído), cada
      * uno puede llegar al timeout de socket del pool, así que en el peor caso el jugador queda
-     * reteniendo su lock varios minutos. Cubre lo que de verdad pasa en producción —una conexión
-     * cortada, un deadlock de InnoDB, un MySQL que se reinicia— sin dejarlo trabado para siempre.
+     * reteniendo su lock varios minutos. Cubre lo que de verdad pasa en producción (una conexión
+     * cortada, un deadlock de InnoDB, un MySQL que se reinicia) sin dejarlo trabado para siempre.
      */
     private val ESPERAS_REINTENTO_MS = longArrayOf(2_000, 4_000, 8_000, 15_000, 30_000)
 
@@ -317,10 +315,10 @@ object PlayerEventHandler {
 
     /**
      * Se libera al arrancar el apagado. Los reintentos esperan sobre esto en vez de con
-     * Thread.sleep: así el apagado los DESPIERTA. Antes solo se miraba [apagando] después de un
-     * intento fallido, y un hilo durmiendo sus 30 s seguía durmiendo; con el pool lleno de esos,
-     * los guardados de apagado de los jugadores conectados quedaban en la cola detrás, y la BD
-     * se cerraba sin haberlos hecho.
+     * Thread.sleep: así el apagado los DESPIERTA. Si solo se mirara [apagando] después de un
+     * intento fallido, un hilo durmiendo sus 30 s seguiría durmiendo; con el pool lleno de esos,
+     * los guardados de apagado de los jugadores conectados quedarían en la cola detrás, y la BD
+     * se cerraría sin haberlos hecho.
      */
     private val finDeEsperas = java.util.concurrent.CountDownLatch(1)
 
@@ -330,9 +328,9 @@ object PlayerEventHandler {
     /**
      * Como [persist], pero si falla lo vuelve a intentar con el MISMO blob antes de rendirse.
      *
-     * Antes un solo error de red era una sesión perdida: el guardado fallaba, el lock se
-     * quedaba tomado y el siguiente backend terminaba cargando el último snapshot bueno, sin
-     * lo que el jugador hizo en esa sesión.
+     * Sin reintentos, un solo error de red es una sesión perdida: el guardado falla, el lock se
+     * queda tomado y el siguiente backend termina cargando el último snapshot bueno, sin lo
+     * que el jugador hizo en esa sesión.
      *
      * Reintentar acá es seguro por tres motivos:
      * - El UPSERT es idempotente: si el intento "fallido" en realidad llegó a escribirse y lo
@@ -399,7 +397,7 @@ object PlayerEventHandler {
             blob[DataType.INVENTORY], blob[DataType.ENDERCHEST], blob[DataType.PC],
             blob[DataType.PARTY], blob[DataType.ACCESSORIES], blob[DataType.BACKPACKS],
             blob[DataType.ECONOMY], blob[DataType.QUESTS], blob[DataType.POKEDEX],
-            blob[DataType.MOCHILA]
+            blob[DataType.MOCHILA], blob[DataType.RCT]
         )
     }
 
@@ -410,13 +408,11 @@ object PlayerEventHandler {
             blob[DataType.INVENTORY], blob[DataType.ENDERCHEST], blob[DataType.PC],
             blob[DataType.PARTY], blob[DataType.ACCESSORIES], blob[DataType.BACKPACKS],
             blob[DataType.ECONOMY], blob[DataType.QUESTS], blob[DataType.POKEDEX],
-            blob[DataType.MOCHILA]
+            blob[DataType.MOCHILA], blob[DataType.RCT]
         )
     }
 
-    // ══════════════════════════════════════════════════════
     // JOIN: congelar al instante y cargar 1 tick después
-    // ══════════════════════════════════════════════════════
 
     private fun registerJoin() {
         ServerPlayConnectionEvents.JOIN.register { handler, _, _ ->
@@ -486,8 +482,8 @@ object PlayerEventHandler {
     /**
      * Saca al jugador del servidor sin tocar su data.
      *
-     * Es la respuesta correcta a todo fallo de carga, y el motivo es que la alternativa —
-     * dejarlo jugar— es una vía de duplicación directa: cuando la carga no termina, el jugador
+     * Es la respuesta correcta a todo fallo de carga, porque la alternativa (dejarlo jugar)
+     * es una vía de duplicación directa: cuando la carga no termina, el jugador
      * NO queda sin nada, queda con el `playerdata` LOCAL de este backend (Minecraft y Cobblemon
      * ya lo cargaron del disco antes de que este mod intervenga). O sea que tiene una copia
      * real y jugable de su inventario y sus Pokémon. Y como `markLoaded` no se llamó, ninguno
@@ -499,25 +495,25 @@ object PlayerEventHandler {
      */
     private fun expulsar(player: ServerPlayerEntity, titulo: String, detalle: String) {
         // Se corre INLINE si ya estamos en el hilo del servidor, como hace GuardApi.dispatch.
-        // Con execute() a secas el kick no ocurria ahi mismo: MinecraftServer encola las
-        // tareas anidadas (shouldExecuteAsync mira runningTasks), asi que llamar a expulsar()
-        // desde dentro de otro server.execute lo dejaba para mas adelante en el drenaje de la
+        // Con execute() a secas el kick no ocurría ahí mismo: MinecraftServer encola las
+        // tareas anidadas (shouldExecuteAsync mira runningTasks), así que llamar a expulsar()
+        // desde dentro de otro server.execute lo dejaba para más adelante en el drenaje de la
         // cola. Funcionaba, salvo en el caso que importa: si el tick loop ya se detuvo
         // (apagado en curso) esa tarea no corre nunca y el jugador no se expulsa.
         val trabajo = Runnable {
             // El freeze NO se saca acá. disconnect() solo cierra el canal; al jugador lo saca del
             // mundo recién el tick siguiente, cuando la red procesa el cierre y dispara DISCONNECT
-            // —y ese evento ya llama a FreezeScreen.clear()—. Si se lo descongelaba acá, en ese
+            // (y ese evento ya llama a FreezeScreen.clear()). Si se lo descongelaba acá, en ese
             // tick quedaba en el mundo sin FreezeGuard: los paquetes que ya tenía en cola (soltar
             // con Q) tiraban ítems de verdad, y un mob o la lava lo podían matar y hacerle soltar
             // todo el inventario LOCAL, mientras MySQL todavía tiene esas mismas cosas.
             if (player.isRemoved) {
-                // No es un caso raro: el jugador pudo irse solo mientras esperabamos a la BD
-                // o al otro backend. Se deja constancia para no buscar un kick que nunca ocurrio.
+                // No es un caso raro: el jugador pudo irse solo mientras esperábamos a la BD
+                // o al otro backend. Se deja constancia para no buscar un kick que nunca ocurrió.
                 //
                 // Y NO se toca el freeze: su DISCONNECT ya lo limpió. Y como el set de congelados
                 // es por UUID, limpiar acá podía descongelar a su sesión NUEVA si volvió a entrar
-                // mientras esta tarea vieja esperaba —dejándola sin FreezeGuard en plena carga—.
+                // mientras esta tarea vieja esperaba (dejándola sin FreezeGuard en plena carga).
                 CobblemonGuard.logger.info("[JOIN] ${player.gameProfile.name} ya se habia desconectado; no hace falta expulsarlo.")
                 return@Runnable
             }
@@ -596,11 +592,11 @@ object PlayerEventHandler {
                         false
                     }
                     if (sigueGuardando) {
-                        // Antes se seguía con la carga "de todas formas". Pero si el guardado de
+                        // No se sigue con la carga "de todas formas": si el guardado de
                         // su sesión anterior todavía no llegó a MySQL, lo que hay en la fila es el
                         // estado de ANTES de esa sesión: cargarlo es devolverle cosas que ya gastó,
                         // y con crossServerSync el merge de la PC borra los Pokémon que consiguió
-                        // después. Y ahora que los guardados reintentan hasta casi un minuto, este
+                        // después. Y como los guardados reintentan hasta casi un minuto, este
                         // caso deja de ser raro justo cuando la BD anda mal.
                         expulsar(player,
                             "§fTu sesión anterior todavía se está guardando.",
@@ -627,17 +623,17 @@ object PlayerEventHandler {
                 }
 
                 // Cross-server: si el jugador viene de OTRO backend, esperamos (congelado,
-                // en este hilo del joinExecutor — no bloquea el servidor ni los guardados) a
+                // en este hilo del joinExecutor: no bloquea el servidor ni los guardados) a
                 // que ese backend confirme que terminó de guardarlo antes de tocar su data.
                 // Evita cargar mientras sigue "vivo" en el otro proceso (dupeo). No-op si
                 // está desactivado.
                 //
-                // Y se MIRA el resultado. Antes se descartaba: el método devuelve false cuando
-                // vence el timeout y se cargaba igual, que es justo lo que no hay que hacer. El
-                // otro backend puede seguir escribiendo, asi que ese snapshot es viejo por
-                // definicion — y como con crossServerSync el merge de la PC borra todo Pokemon
-                // vivo que no este en el snapshot, aplicar uno viejo no solo trae datos
-                // atrasados: BORRA lo que el jugador consiguio despues. Al salir, esa perdida
+                // Y se MIRA el resultado: el método devuelve false cuando vence el timeout, y
+                // cargar igual es justo lo que no hay que hacer. El
+                // otro backend puede seguir escribiendo, así que ese snapshot es viejo por
+                // definición, y como con crossServerSync el merge de la PC borra todo Pokemon
+                // vivo que no esté en el snapshot, aplicar uno viejo no solo trae datos
+                // atrasados: BORRA lo que el jugador consiguió después. Al salir, esa pérdida
                 // se escribe a MySQL y ya no se recupera.
                 if (!CrossServerCoordinator.awaitRelease(uuid, name)) {
                     expulsar(player,
@@ -655,11 +651,11 @@ object PlayerEventHandler {
                 val data = CobblemonGuard.repository.loadPlayerData(uuid, name)
 
                 if (data == null) {
-                    // ── PRIMER INGRESO: guardamos su estado inicial ──
+                    // PRIMER INGRESO: guardamos su estado inicial
                     player.server.execute {
                         if (player.isRemoved) return@execute
                         // Mismo motivo que en el reingreso: este bloque corre fuera del alcance
-                        // del catch de abajo. Si serialize() tira aca, el jugador nuevo se queda
+                        // del catch de abajo. Si serialize() tira acá, el jugador nuevo se queda
                         // congelado y sin fila en MySQL, y nada lo expulsa ni lo registra.
                         val blob = try {
                             FreezeScreen.registering(player)
@@ -674,12 +670,11 @@ object PlayerEventHandler {
                             }
                             return@execute
                         }
-                        // Por chainSave, como TODA otra escritura de este UUID. Antes iba
-                        // directo a dbExecutor: era la unica escritura del mod que podia correr
-                        // en paralelo con otra del mismo jugador.
+                        // Por chainSave, como TODA otra escritura de este UUID: directo a
+                        // dbExecutor podría correr en paralelo con otra del mismo jugador.
                         chainSave(uuid) {
                             // Y respeta savingEnabled: con /cg saving stop puesto para una
-                            // migracion, un jugador nuevo escribia su fila igual.
+                            // migración, un jugador nuevo no tiene que escribir su fila.
                             if (!savingEnabled) {
                                 CobblemonGuard.logger.warn(
                                     "[JOIN] Primer ingreso de $name: guardado PAUSADO (/cg saving), no se crea su fila."
@@ -696,10 +691,10 @@ object PlayerEventHandler {
                                 }
                             }
                             // markLoaded SOLO si el jugador sigue conectado. Sin este chequeo, un
-                            // jugador que se iba mientras corria el persist quedaba metido en
-                            // dataLoaded PARA SIEMPRE (el DISCONNECT ya lo habia sacado, y esta
-                            // linea lo volvia a agregar). En su siguiente sesion eso desarmaba el
-                            // guard que impide guardar cuando la carga fallo: escribia el estado
+                            // jugador que se iba mientras corría el persist quedaba metido en
+                            // dataLoaded PARA SIEMPRE (el DISCONNECT ya lo había sacado, y esta
+                            // línea lo volvía a agregar). En su siguiente sesión eso desarmaba el
+                            // guard que impide guardar cuando la carga falló: escribía el estado
                             // del disco local encima de MySQL.
                             if (player.isRemoved) {
                                 CobblemonGuard.logger.warn("[JOIN] $name se fue durante su primer ingreso — no se marca como cargado.")
@@ -717,38 +712,38 @@ object PlayerEventHandler {
                         }
                     }
                 } else {
-                    // ── REINGRESO: aplicamos los datos de MySQL ──
+                    // REINGRESO: aplicamos los datos de MySQL
                     player.server.execute {
                         if (player.isRemoved) return@execute
                         // Try/catch PROPIO. El catch grande del joinExecutor no cubre nada de
-                        // lo que pasa aca adentro: esto corre despues, en el hilo del servidor.
-                        // Y aca adentro es justo donde se APLICAN los datos, o sea el paso con
-                        // mas chance de fallar (toda la lectura de Cobblemon es por reflexion).
-                        // Si SyncService.apply tiraba, la excepcion se iba al tick del servidor:
+                        // lo que pasa acá adentro: esto corre después, en el hilo del servidor.
+                        // Y acá adentro es justo donde se APLICAN los datos, o sea el paso con
+                        // más chance de fallar (toda la lectura de Cobblemon es por reflexión).
+                        // Si SyncService.apply tiraba, la excepción se iba al tick del servidor:
                         // el jugador quedaba congelado para siempre, sin markLoaded y sin que
                         // nadie lo expulsara, con el playerdata local de este backend intacto.
                         try {
                         FreezeScreen.loading(player)
-                        // preserveLivePokemon: en single-server SÍ se preserva (true) — no pisar
+                        // preserveLivePokemon: en single-server SÍ se preserva (true): no pisar
                         // pokémon vivos que Cobblemon ya cargó de SU disco local (evita fantasmas
                         // cuando MySQL es solo un respaldo/migración, no la fuente de verdad).
                         //
                         // En redes cross-server (crossServerSyncEnabled) esto NO puede ser true:
                         // cada backend tiene su PROPIO disco local independiente, así que "ya tiene
-                        // pokémon" NO significa "está al día" — solo significa que el jugador (o una
+                        // pokémon" NO significa "está al día": solo significa que el jugador (o una
                         // pastura) tocó la PC/party de ESTE backend antes. Con onlyIfEmpty=true,
-                        // MySQL solo se aplicaba la PRIMERA vez que el jugador pisaba cada backend;
-                        // desde la segunda vez en adelante se ignoraba por completo, dejando que
-                        // cada backend siguiera con su copia local (potencialmente vieja frente al
+                        // MySQL solo se aplicaría la PRIMERA vez que el jugador pisa cada backend;
+                        // desde la segunda vez en adelante se ignoraría por completo, y
+                        // cada backend seguiría con su copia local (potencialmente vieja frente al
                         // backend donde jugó por última vez, o frente a una pastura que le modificó
-                        // la PC en ESTE backend mientras estaba desconectado/jugando en otro lado —
+                        // la PC en ESTE backend mientras estaba desconectado/jugando en otro lado:
                         // exactamente el escenario de "pastures" que causa desyncs). Por eso en
                         // cross-server SIEMPRE se aplica MySQL (fuente de verdad, garantizada fresca
                         // por el lock de CrossServerCoordinator.awaitRelease ya esperado arriba): la
                         // mezcla (CobblemonStorage.mezclarPC / mezclarParty) da de alta y de baja por
                         // UUID, y a los Pokémon que ya estaban les copia el CONTENIDO de la BD sobre el
-                        // mismo objeto, sin crear duplicados. blobHasPokemon sigue protegiendo contra
-                        // pisar con un snapshot vacío.
+                        // mismo objeto, sin crear duplicados. Un snapshot vacío solo se aplica si GUARD
+                        // lo guardó con su marca (CobblemonStorage.MARCA_GUARDADO); si no, no pisa nada.
                         val preserveLivePokemon = !CobblemonGuard.config.crossServerSyncEnabled
                         val resultados = SyncService.apply(player, data.toBlobMap(), SyncTypes.ALL, preserveLivePokemon = preserveLivePokemon)
                         // Lo que haya en el cursor o en la grilla 2x2 salió del inventario LOCAL
@@ -760,16 +755,16 @@ object PlayerEventHandler {
                             FreezeScreen.descartarItemsSueltos(player)
                         }
 
-                        // Si algun tipo habilitado tenia datos y NO se pudo aplicar, el jugador no
+                        // Si algún tipo habilitado tenía datos y NO se pudo aplicar, el jugador no
                         // tiene sus datos de MySQL: tiene los locales de este backend (la PC vieja
-                        // del disco, el inventario de la ultima vez que paso por aca). Dejarlo jugar
-                        // asi y despues guardarlo es escribir ese estado viejo encima del bueno, y
+                        // del disco, el inventario de la última vez que pasó por acá). Dejarlo jugar
+                        // así y después guardarlo es escribir ese estado viejo encima del bueno, y
                         // si en el medio vende o intercambia algo, es duplicarlo.
                         //
-                        // Se lo expulsa SIN markLoaded, asi que su desconexion no escribe nada y
+                        // Se lo expulsa SIN markLoaded, así que su desconexión no escribe nada y
                         // MySQL queda intacta. Esto es deliberadamente estricto: si un mod cambia su
                         // API y el tipo falla para todos, el backend deja de dejar entrar gente. Es
-                        // ruidoso a proposito — un servidor que no deja entrar se nota en un minuto;
+                        // ruidoso a propósito: un servidor que no deja entrar se nota en un minuto;
                         // uno que pisa PCs en silencio se nota cuando ya no hay backup que alcance.
                         val fallidos = SyncService.fallidos(resultados)
                         if (fallidos.isNotEmpty()) {
@@ -778,7 +773,7 @@ object PlayerEventHandler {
                                 DataType.INVENTORY -> "inv"; DataType.ENDERCHEST -> "ender"; DataType.PC -> "pc"
                                 DataType.PARTY -> "party"; DataType.ACCESSORIES -> "acc"; DataType.BACKPACKS -> "bp"
                                 DataType.ECONOMY -> "eco"; DataType.QUESTS -> "misiones"; DataType.POKEDEX -> "pokedex"
-                                DataType.MOCHILA -> "mochila"
+                                DataType.MOCHILA -> "mochila"; DataType.RCT -> "rct"
                             }
                             dbExecutor.submit {
                                 runCatching { CobblemonGuard.repository.logSync(uuid, name, "LOAD", false, "No se pudo aplicar: $lista") }
@@ -789,11 +784,11 @@ object PlayerEventHandler {
                                 // jugador conectado y cargado, y a este se lo expulsa ahora mismo.
                                 CobblemonGuard.logger.error(
                                     "[JOIN] $name: no se pudo aplicar $lista desde MySQL. No se marca como cargado " +
-                                    "(no se va a guardar nada suyo) y se lo expulsa. Si le pasa SOLO a el, lo mas " +
+                                    "(no se va a guardar nada suyo) y se lo expulsa. Si le pasa SOLO a él, lo más " +
                                     "probable es un dato suyo dañado: /cg restaurarfila $name <tiempo> $tipoEjemplo " +
                                     "copia ese dato desde un backup anterior al daño (sin que tenga que estar conectado). " +
-                                    "Solo si no hay ningun backup bueno, /cg limpiar como ultimo recurso. Si les " +
-                                    "pasa a TODOS con el mismo tipo, casi seguro cambio la version del mod de ese tipo " +
+                                    "Solo si no hay ningún backup bueno, /cg limpiar como último recurso. Si les " +
+                                    "pasa a TODOS con el mismo tipo, casi seguro cambió la versión del mod de ese tipo " +
                                     "(revisa el log de arriba); para dejarlos entrar mientras tanto existe " +
                                     "expulsarSiFallaAlCargar=false en la config, leyendo antes lo que implica."
                                 )
@@ -805,7 +800,7 @@ object PlayerEventHandler {
                             CobblemonGuard.logger.error(
                                 "[JOIN] $name: no se pudo aplicar $lista desde MySQL, pero entra igual porque " +
                                 "expulsarSiFallaAlCargar=false. Para $lista juega con los datos LOCALES de este " +
-                                "servidor, y su proximo guardado puede escribirlos encima de los de MySQL."
+                                "servidor, y su próximo guardado puede escribirlos encima de los de MySQL."
                             )
                         }
 
@@ -815,22 +810,19 @@ object PlayerEventHandler {
                         FreezeScreen.restored(player)
                         CobblemonGuard.logger.info("[JOIN] Datos restaurados para $name desde MySQL.")
 
-                        // claim() abre una conexión a Redis y hace un SET por RED. Antes se
-                        // llamaba acá mismo, es decir EN EL HILO DEL SERVIDOR, violando lo
+                        // claim() abre una conexión a Redis y hace un SET por RED. No se llama
+                        // acá mismo, EN EL HILO DEL SERVIDOR, por lo
                         // que documenta el propio CrossServerCoordinator ("todas las
                         // llamadas de red (Jedis) deben hacerse FUERA del hilo del
-                        // servidor"). Con Redis local son sub-milisegundos y no se notaba;
+                        // servidor"). Con Redis local son sub-milisegundos y no se nota;
                         // con Redis en otra máquina, bajo carga, o durante un BGSAVE, cada
-                        // join congelaba el servidor entero lo que tardara ese round-trip.
-                        // El path de PRIMER ingreso siempre lo hizo bien; solo el reingreso
-                        // —o sea, prácticamente todos los joins— lo hacía mal.
-                        //
-                        // El logSync del LOAD también se movió acá adentro: antes se
-                        // escribía antes de que los datos se hubieran aplicado, así que si
-                        // el apply fallaba el log igual decía que el LOAD había salido bien.
+                        // join congelaría el servidor entero lo que tarde ese round-trip.
+                        // El logSync del LOAD también va acá adentro: escrito antes de que los
+                        // datos se apliquen, el log diría que el LOAD salió bien aunque el
+                        // apply fallara.
                         //
                         // El claim va al hilo de Redis y no al dbExecutor: con MySQL lento, el pool de
-                        // BD se llena de guardados que reintentan, y un claim encolado detrás dejaba al
+                        // BD se llena de guardados que reintentan, y un claim encolado detrás dejaría al
                         // jugador jugando acá SIN lock. Si en ese rato se pasaba a otro backend, ese
                         // otro no veía lock, no esperaba, y cargaba MySQL antes de que este guardara.
                         redisExecutor.submit {
@@ -860,20 +852,20 @@ object PlayerEventHandler {
                 // del executor, y el jugador quedaba congelado sin explicación.
                 CobblemonGuard.logger.error("[JOIN] Error procesando datos de $name: ${e.message}", e)
                 // Se EXPULSA, no se descongela. Ver el comentario de expulsar(): descongelarlo
-                // aca lo dejaba jugando con el playerdata local de este backend y sin guardar
-                // nada, que es la via de duplicacion mas barata del mod. El camino de "BD no
-                // disponible" de mas arriba ya hacia lo correcto; este hacia lo contrario.
+                // acá lo dejaba jugando con el playerdata local de este backend y sin guardar
+                // nada, que es la vía de duplicación más barata del mod. El camino de "BD no
+                // disponible" de más arriba ya hacía lo correcto; este hacía lo contrario.
                 expulsar(player,
                     "§fNo se pudieron cargar tus datos.",
                     "§7Vuelve a entrar en unos segundos. Si sigue pasando, avisa a un admin.")
-                try { CobblemonGuard.repository.logSync(uuid, name, "LOAD", false, e.message) } catch (_: Exception) {}
+                try { CobblemonGuard.repository.logSync(uuid, name, "LOAD", false, e.message) } catch (_: Exception) {
+                    // logSync ya avisa si falla; esto cubre el repositorio sin inicializar.
+                }
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════
     // DISCONNECT: guardar datos
-    // ══════════════════════════════════════════════════════
 
     private fun registerDisconnect() {
         ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
@@ -900,8 +892,8 @@ object PlayerEventHandler {
             // servidor. El DISCONNECT puede dispararse en un hilo de red; si quitáramos
             // dataLoaded antes del guardado, el guard lo bloquearía (pérdida de datos).
             val saveThenCleanup = Runnable {
-                // Ultima ventana para que otros mods vuelquen lo suyo mientras el jugador
-                // todavia existe (ver GuardApi.onPlayerDataSaving).
+                // Última ventana para que otros mods vuelquen lo suyo mientras el jugador
+                // todavía existe (ver GuardApi.onPlayerDataSaving).
                 GuardApi.fireDataSaving(player)
                 savePlayerDataAsync(player, porDesconexion = true)
                 dataLoaded.remove(player.uuid)
@@ -923,32 +915,38 @@ object PlayerEventHandler {
         val uuid = player.uuid
         val name = player.name.string
 
-        // Las dos salidas tempranas sueltan el lock, pero SOLO si el jugador se esta yendo.
+        // Las dos salidas tempranas sueltan el lock, pero SOLO si el jugador se está yendo.
         //
         // Por que hay que soltarlo: si no, queda reclamado por este backend para siempre. El
-        // heartbeat le renueva el TTL sin mirar si sigue conectado, asi que nunca expira, y a
-        // partir de ahi cada join suyo a CUALQUIER backend espera el timeout completo. La
-        // unica salida era que un admin corriera /cg unlock, y nada en el log lo decia.
+        // heartbeat le renueva el TTL sin mirar si sigue conectado, así que nunca expira, y a
+        // partir de ahí cada join suyo a CUALQUIER backend espera el timeout completo. La
+        // única salida era que un admin corriera /cg unlock, y nada en el log lo decía.
         //
-        // Por que SOLO en la desconexion: a este mismo metodo lo llama el AUTO-SAVE, para
-        // jugadores que estan online y jugando aca. Con /cg saving stop puesto —que es justo
-        // el modo que se usa para una migracion, donde el lock importa mas que nunca— cada
+        // Por que SOLO en la desconexion: a este mismo método lo llama el AUTO-SAVE, para
+        // jugadores que están online y jugando acá. Con /cg saving stop puesto (que es justo
+        // el modo que se usa para una migración, donde el lock importa más que nunca) cada
         // ronda de auto-save entraba por "!savingEnabled" y soltaba el lock de todos los
-        // conectados. Cualquier otro backend podia entonces cargarlos sin esperar a nadie.
+        // conectados. Cualquier otro backend podía entonces cargarlos sin esperar a nadie.
         //
         // Y se suelta por chainSave, no por dbExecutor suelto. chainSave serializa por UUID,
-        // asi que el release no puede adelantarse ni atrasarse respecto de otras escrituras
-        // del mismo jugador. Con dbExecutor pelado, una reconexion rapida (el kick dice
-        // "vuelve a entrar en unos segundos") podia ejecutar el claim del JOIN nuevo ANTES
-        // que el release de la sesion vieja: el release borraba el lock recien tomado —el CAS
-        // pasa, porque el serverId es el mismo backend— y el jugador quedaba jugando aca sin
-        // lock y sin heartbeat el resto de la sesion. Ademas saca el viaje a Redis del hilo
-        // del servidor, que es donde entra este metodo (release() son hasta dos round-trips
+        // así que el release no puede adelantarse ni atrasarse respecto de otras escrituras
+        // del mismo jugador. Con dbExecutor pelado, una reconexión rápida (el kick dice
+        // "vuelve a entrar en unos segundos") podía ejecutar el claim del JOIN nuevo ANTES
+        // que el release de la sesión vieja: el release borraba el lock recién tomado (el CAS
+        // pasa, porque el serverId es el mismo backend) y el jugador quedaba jugando acá sin
+        // lock y sin heartbeat el resto de la sesión. Además saca el viaje a Redis del hilo
+        // del servidor, que es donde entra este método (release() son hasta dos round-trips
         // con timeout de socket de 5 s).
         fun soltarLockSiSeVa() {
             if (porDesconexion) chainSave(uuid) { CrossServerCoordinator.release(uuid) }
         }
         if (!savingEnabled) {
+            soltarLockSiSeVa()
+            return
+        }
+        if (uuid !in dataLoaded && apagando) {
+            // Ya se guardó en la fase temprana del apagado (guardarAlApagar); esta es la desconexión
+            // que hace Minecraft después, con la economía de Impactor ya cerrada. No se escribe nada.
             soltarLockSiSeVa()
             return
         }
@@ -981,8 +979,12 @@ object PlayerEventHandler {
                     return@chainSave
                 }
                 persistConReintentos(uuid, name, blob, verificarDueño = porDesconexion)
-                CobblemonGuard.logger.info("[SAVE] Datos guardados en MySQL para $name.")
-                // Recién AHORA que el guardado en MySQL está confirmado liberamos el lock —
+                if (porDesconexion) {
+                    CobblemonGuard.logger.info("[SAVE] ✔ $name guardado al salir — ${resumenGuardado(blob)}")
+                } else {
+                    CobblemonGuard.logger.info("[SAVE] Datos guardados en MySQL para $name.")
+                }
+                // Recién AHORA que el guardado en MySQL está confirmado liberamos el lock:
                 // si liberáramos antes y el guardado fallara, el próximo backend cargaría
                 // datos viejos creyendo que están al día.
                 CrossServerCoordinator.release(uuid)
@@ -1013,16 +1015,16 @@ object PlayerEventHandler {
                     // intentar con datos más nuevos. Se registra, pero no es una pérdida todavía.
                     CobblemonGuard.logger.error("[SAVE] Error guardando datos de $name (sigue conectado, se reintentará en el próximo guardado): ${e.message}")
                 }
-                try { CobblemonGuard.repository.logSync(uuid, name, "SAVE", false, e.message) } catch (_: Exception) {}
-                // NO liberamos el lock si el guardado falló — mejor dejar al jugador esperando
+                try { CobblemonGuard.repository.logSync(uuid, name, "SAVE", false, e.message) } catch (_: Exception) {
+                    // logSync ya avisa si falla; esto cubre el repositorio sin inicializar.
+                }
+                // NO liberamos el lock si el guardado falló: mejor dejar al jugador esperando
                 // en el otro backend (hasta el timeout) que arriesgar una carga con datos viejos.
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════
     // SERVER STOP: guardar todos los jugadores online
-    // ══════════════════════════════════════════════════════
 
     /** Tope de lo que el apagado espera a los guardados que ya estaban en curso. */
     private const val ESPERA_EN_VUELO_AL_APAGAR_MS = 10_000L
@@ -1031,7 +1033,7 @@ object PlayerEventHandler {
      * Espera, con tope, a que terminen los guardados que ya estaban en curso antes de cerrar la BD.
      *
      * El apagado solo esperaba a los guardados de los jugadores CONECTADOS. Los de jugadores que ya
-     * se habían ido —por ejemplo, reintentando porque MySQL tuvo un corte— quedaban afuera: el
+     * se habían ido (por ejemplo, reintentando porque MySQL tuvo un corte) quedaban afuera: el
      * apagado los despierta para un último intento, pero cerraba la BD sin esperarlos, y ese último
      * intento chocaba contra un pool cerrado. Con el servidor vacío pasaba siempre, que es justo
      * el reinicio típico después de un corte.
@@ -1047,30 +1049,46 @@ object PlayerEventHandler {
         }
     }
 
+    /**
+     * Fase de SERVER_STOPPING que corre ANTES de la normal. Impactor cierra su economía en la fase
+     * normal ("Shutting down economy service"), y cuando el guardado de apagado de GUARD corría detrás
+     * de eso, leería los saldos con la economía ya cerrada: los CobbleDollars del jugador se guardarían
+     * en 0 (o no se guardarían) y al entrar al lobby le quedaría ese 0. Por eso los jugadores se guardan
+     * en esta fase, con Impactor todavía vivo, y la BD se cierra en la fase normal (otros mods, como
+     * cobblemmo-server, usan este pool en su propio apagado).
+     */
+    private val FASE_GUARDAR = Identifier.of("cobblemonguard", "guardar_antes_que_impactor")
+
+    /** Resultado del guardado temprano, para el resumen que se escribe al cerrar la BD. */
+    @Volatile private var resumenApagado: String? = null
+
     private fun registerServerStop() {
-        ServerLifecycleEvents.SERVER_STOPPING.register { server ->
+        ServerLifecycleEvents.SERVER_STOPPING.addPhaseOrdering(FASE_GUARDAR, Event.DEFAULT_PHASE)
+        ServerLifecycleEvents.SERVER_STOPPING.register(FASE_GUARDAR) { server -> guardarAlApagar(server) }
+        ServerLifecycleEvents.SERVER_STOPPING.register { _ ->
+            esperarGuardadosEnVuelo()
+            CobblemonGuard.database.close()
+            CrossServerCoordinator.close()
+            resumenApagado?.let { CobblemonGuard.logger.info(it) }
+        }
+    }
+
+    private fun guardarAlApagar(server: net.minecraft.server.MinecraftServer) {
+        run {
             // Los guardados que estén reintentando dejan de dormir y fallan en su próximo
             // intento: la BD se va a cerrar en segundos y sus hilos hacen falta para el
             // guardado de apagado, que lleva datos más nuevos de esos mismos jugadores.
             apagando = true
             finDeEsperas.countDown()
             if (!CobblemonGuard.config.syncOnJoinLeave || !savingEnabled) {
-                // Modo solo-backups (o pausado): Minecraft ya guarda a los jugadores; solo cerramos la BD.
-                esperarGuardadosEnVuelo()
-                CobblemonGuard.database.close()
-                CrossServerCoordinator.close()
-                return@register
+                // Modo solo-backups (o pausado): Minecraft ya guarda a los jugadores; la BD se cierra en la fase normal.
+                return
             }
             val players = server.playerManager.playerList.filter { it.uuid in dataLoaded }
-            if (players.isEmpty()) {
-                esperarGuardadosEnVuelo()
-                CobblemonGuard.database.close()
-                CrossServerCoordinator.close()
-                return@register
-            }
+            if (players.isEmpty()) return
             CobblemonGuard.logger.info("[STOP] Guardando datos de ${players.size} jugadores (pool de conexiones MySQL: ${CobblemonGuard.config.poolSize})...")
 
-            // ANTES: se esperaba cada future en SECUENCIA con "it.get(10, SECONDS)" — con
+            // ANTES: se esperaba cada future en SECUENCIA con "it.get(10, SECONDS)": con
             // un pool de conexiones chico (default 5) y muchos jugadores online, eso podía
             // sumar hasta jugadores × 10s de espera (varios minutos), y encima el resultado
             // del timeout se descartaba en silencio: si el proceso era matado (SIGKILL) por
@@ -1084,22 +1102,25 @@ object PlayerEventHandler {
             // cantidad de jugadores, y si alguno no llega a tiempo se loguea explícitamente
             // (con nombre) en vez de cerrar el pool en silencio.
             val pendingNames = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
-            // mapNotNull y con la serializacion dentro de un try: si serialize() tira con un
-            // jugador, antes se llevaba puesto el handler entero de SERVER_STOPPING. Los
-            // jugadores que faltaban no se guardaban, y —peor— el database.close() y el
-            // CrossServerCoordinator.close() del final no corrian: conexiones cortadas de
-            // golpe y locks de Redis colgados hasta que venciera el TTL. Un jugador problematico
-            // ahora se pierde solo a si mismo, y queda en pendingNames para que salga en la alarma.
+            // mapNotNull y con la serialización dentro de un try: si serialize() tira con un
+            // jugador, no se lleva puesto el handler entero de SERVER_STOPPING (los jugadores que
+            // faltan no se guardarían y, peor, el database.close() y el CrossServerCoordinator.close()
+            // del final no correrían: conexiones cortadas de golpe y locks de Redis colgados hasta
+            // que venza el TTL). Un jugador problemático se pierde solo a sí mismo, y queda en
+            // pendingNames para que salga en la alarma.
             val futures: List<CompletableFuture<Void>> = players.mapNotNull { player ->
                 val uuid = player.uuid
                 val name = player.name.string
                 pendingNames.add(name)
                 val blob = try {
-                    SyncService.serialize(player)   // hilo del servidor (evento STOPPING)
+                    SyncService.serialize(player)   // hilo del servidor (evento STOPPING, antes que Impactor)
                 } catch (e: Exception) {
                     CobblemonGuard.logger.error("[STOP] Error serializando a $name — no se guarda: ${e.message}", e)
                     return@mapNotNull null
                 }
+                // Ya quedó su foto del apagado: que la desconexión que viene después (con la economía
+                // de Impactor ya cerrada) no lo vuelva a guardar encima.
+                dataLoaded.remove(uuid)
                 // chainSave y no runAsync suelto: si este jugador tenía un auto-save en
                 // vuelo, el de apagado se encola DESPUÉS y no compite con él.
                 chainSave(uuid) {
@@ -1108,7 +1129,8 @@ object PlayerEventHandler {
                         // Liberamos el lock explícitamente: un apagado normal (no un crash) NO
                         // debe depender del TTL para que el jugador pueda entrar a otro backend.
                         CrossServerCoordinator.release(uuid)
-                        // Se saca de pendientes SOLO si el guardado salió bien. Antes esto
+                        CobblemonGuard.logger.info("[STOP] ✔ $name guardado al apagar — ${resumenGuardado(blob)}")
+                        // Se saca de pendientes SOLO si el guardado salió bien. Si esto
                         // estaba en un `finally`, así que también se sacaba cuando persist()
                         // lanzaba excepción: el resumen final decía "N/N confirmados" y no se
                         // mandaba el webhook aunque hubiera habido fallos reales.
@@ -1121,10 +1143,10 @@ object PlayerEventHandler {
 
             // pendingNames es un synchronizedSet, pero su ITERADOR no se sincroniza solo:
             // recorrerlo (joinToString) mientras una tarea del pool hace remove() lanza
-            // ConcurrentModificationException. Y aca abajo se lo recorre por definicion con
-            // tareas en vuelo (justo despues de un timeout). Esa excepcion escapaba del
+            // ConcurrentModificationException. Y acá abajo se lo recorre por definición con
+            // tareas en vuelo (justo después de un timeout). Esa excepción escapaba del
             // handler del evento y se llevaba puesto el database.close() y el
-            // CrossServerCoordinator.close() de mas abajo: conexiones cortadas de golpe y
+            // CrossServerCoordinator.close() de más abajo: conexiones cortadas de golpe y
             // locks de Redis colgados hasta que venciera el TTL. Se saca una copia bajo el
             // monitor y se trabaja sobre la copia.
             fun pendientes(): List<String> = synchronized(pendingNames) { pendingNames.toList() }
@@ -1132,12 +1154,11 @@ object PlayerEventHandler {
             // Base generosa + margen por jugador, con un techo para no colgar el apagado
             // indefinidamente si la BD está caída (mejor cortar y avisar que trabar el stop).
             val timeoutMs = (15_000L + players.size * 300L).coerceAtMost(90_000L)
-            // Solo un TimeoutException cuenta como "timeout". Antes cualquier excepcion lo
-            // marcaba: un ExecutionException (fallo real de persist) o un
-            // RejectedExecutionException (dbExecutor ya cerrado, que falla al instante) se
-            // reportaban al admin como "la BD esta lenta, sube poolSize" — mandandolo a
-            // perseguir un problema de rendimiento que no existe mientras el error de verdad
-            // seguia ahi.
+            // Solo un TimeoutException cuenta como "timeout". Un ExecutionException (fallo real
+            // de persist) o un RejectedExecutionException (dbExecutor ya cerrado, que falla al
+            // instante) no son lentitud: reportarlos como "la BD está lenta, sube poolSize"
+            // mandaría al admin a perseguir un problema de rendimiento que no existe mientras el
+            // error de verdad sigue ahí.
             val timedOut = try {
                 CompletableFuture.allOf(*futures.toTypedArray()).get(timeoutMs, TimeUnit.MILLISECONDS)
                 false
@@ -1148,17 +1169,17 @@ object PlayerEventHandler {
                 false
             }
 
-            // La PRORROGA va ANTES de la alarma, no despues.
+            // La PRÓRROGA va ANTES de la alarma, no después.
             //
-            // Cerrar la BD con guardados corriendo les arranca la conexion de las manos, y
-            // esos jugadores pierden la sesion entera. El timeout de arriba existe para no
+            // Cerrar la BD con guardados corriendo les arranca la conexión de las manos, y
+            // esos jugadores pierden la sesión entera. El timeout de arriba existe para no
             // colgar el apagado indefinidamente, pero "no confirmo en 15 s" casi nunca
-            // significa "esta colgado para siempre": significa que la BD esta lenta.
+            // significa "esta colgado para siempre": significa que la BD está lenta.
             //
-            // Cuando esta espera extra estaba DESPUES del bloque de alarma, un guardado que
-            // terminaba durante la prorroga ya habia disparado el error rojo y el webhook de
-            // Discord: el admin recibia un aviso de perdida de datos por jugadores que se
-            // guardaron bien. Se avisa una sola vez, y recien cuando se sabe el resultado final.
+            // Cuando esta espera extra estaba DESPUÉS del bloque de alarma, un guardado que
+            // terminaba durante la prórroga ya había disparado el error rojo y el webhook de
+            // Discord: el admin recibía un aviso de perdida de datos por jugadores que se
+            // guardaron bien. Se avisa una sola vez, y recién cuando se sabe el resultado final.
             if (timedOut && pendingNames.isNotEmpty()) {
                 CobblemonGuard.logger.warn("[STOP] Esperando ${GRACIA_CIERRE_MS / 1000}s más antes de cerrar la BD, para no cortar los guardados en vuelo...")
                 runCatching {
@@ -1185,27 +1206,33 @@ object PlayerEventHandler {
                 )
             }
 
-            esperarGuardadosEnVuelo()
-            CobblemonGuard.database.close()
-            CrossServerCoordinator.close()
-            CobblemonGuard.logger.info("[STOP] Guardado de apagado: ${players.size - sinConfirmar.size}/${players.size} confirmados. BD cerrada.")
+            resumenApagado = "[STOP] Guardado de apagado: ${players.size - sinConfirmar.size}/${players.size} confirmados. BD cerrada."
         }
     }
 
-    // ══════════════════════════════════════════════════════
+    /** Qué se guardó de un jugador (para el log de salida y apagado): tipos con datos y saldos. */
+    private fun resumenGuardado(blob: Map<DataType, ByteArray?>): String {
+        val nombres = mapOf(
+            DataType.INVENTORY to "inventario", DataType.ENDERCHEST to "ender", DataType.PC to "PC",
+            DataType.PARTY to "equipo", DataType.ACCESSORIES to "accesorios", DataType.BACKPACKS to "mochilas SB",
+            DataType.QUESTS to "misiones", DataType.POKEDEX to "pokedex", DataType.MOCHILA to "mochila",
+            DataType.RCT to "progreso RCT"
+        )
+        val tipos = nombres.filterKeys { blob[it] != null }.values.joinToString(", ").ifEmpty { "sin objetos" }
+        val eco = blob[DataType.ECONOMY]?.let { String(it, Charsets.UTF_8).lines().filter { l -> l.isNotBlank() }.joinToString(", ") }
+            ?: "sin saldos (se conserva el de MySQL)"
+        return "$tipos · saldos: $eco"
+    }
+
     // AUTO-SAVE + BACKUP periódicos
-    // ══════════════════════════════════════════════════════
 
     private fun registerAutoSave() {
         val intervalSeconds = CobblemonGuard.config.autoSaveIntervalSeconds
         CobblemonGuard.logger.info("Auto-save activado cada ${intervalSeconds}s")
-        // OPTIMIZACIÓN DE TPS: antes este recorrido de TODOS los jugadores online corría
-        // en CADA TICK (20 veces por segundo), aunque el intervalo se configura en
-        // SEGUNDOS — esa precisión extra no sirve para nada, solo cuesta CPU del hilo
-        // del servidor proporcional al número de jugadores conectados, 20x más de lo
-        // necesario. Con muchos jugadores esto es justamente el tipo de "pérdida
-        // gradual de TPS que escala con el volumen de jugadores". Ahora se revisa una
-        // sola vez por segundo — mismo comportamiento, 1/20 del costo.
+        // Se revisa una vez por segundo y no en cada tick: el intervalo se configura en
+        // SEGUNDOS, así que recorrer a TODOS los jugadores online 20 veces por segundo solo
+        // cuesta CPU del hilo del servidor (proporcional a los jugadores conectados) sin
+        // cambiar nada. Así es el mismo comportamiento con 1/20 del costo.
         var secondTicks = 0
         ServerTickEvents.END_SERVER_TICK.register { server ->
             if (++secondTicks < 20) return@register
@@ -1232,7 +1259,7 @@ object PlayerEventHandler {
             "Backups automáticos activados cada ${intervalSeconds}s, retención ${CobblemonGuard.config.backupRetentionHours}h (${CobblemonGuard.config.backupRetentionHours / 24}d)"
         )
         // Mismo motivo que en registerAutoSave(): el recorrido de jugadores se revisa
-        // una vez por segundo, no en cada tick — el intervalo ya se configura en segundos.
+        // una vez por segundo, no en cada tick: el intervalo ya se configura en segundos.
         var secondTicks = 0
         ServerTickEvents.END_SERVER_TICK.register { server ->
             if (++secondTicks >= 20) {
@@ -1253,29 +1280,25 @@ object PlayerEventHandler {
                 val logHours = CobblemonGuard.config.syncLogRetentionHoursEffective
                 dbExecutor.submit {
                     runCatching { CobblemonGuard.backupRepository.cleanOldBackups(backupHours) }
-                    // El log de sincronización no se limpiaba NUNCA — solo existía un DELETE
-                    // comentado en sql/setup.sql para correr a mano. Ahora entra en el mismo
-                    // ciclo, también por lotes.
+                    // El log de sincronización se limpia en el mismo ciclo, también por lotes
+                    // (sql/setup.sql solo trae el DELETE comentado para correr a mano).
                     runCatching { CobblemonGuard.repository.cleanOldSyncLog(logHours) }
                 }
             }
         }
     }
 
-    // ══════════════════════════════════════════════════════
     // CROSS-SERVER: heartbeat periódico de los locks reclamados por este backend
-    // ══════════════════════════════════════════════════════
 
     private const val CROSS_SERVER_HEARTBEAT_TICKS = 15 * 20   // cada 15 segundos
     private var heartbeatTicks = 0
 
     /**
-     * Hilo PROPIO para hablar con Redis: el heartbeat y el claim del ingreso. Antes iban al
-     * [dbExecutor], el mismo pool que hace los
-     * guardados: con MySQL lento o caído, ese pool se llena de guardados esperando (y ahora de
-     * guardados reintentando), y el heartbeat quedaba en la cola detrás de ellos. Si esa espera
-     * pasaba el TTL del lock, los locks de los jugadores que están JUGANDO acá caducaban, y otro
-     * backend podía cargarlos mientras este todavía los tiene. Redis no depende de MySQL: que uno
+     * Hilo PROPIO para hablar con Redis: el heartbeat y el claim del ingreso. No van al
+     * [dbExecutor], el mismo pool que hace los guardados: con MySQL lento o caído, ese pool se
+     * llena de guardados esperando y reintentando, y el heartbeat quedaría en la cola detrás de
+     * ellos. Si esa espera pasara el TTL del lock, los locks de los jugadores que están JUGANDO
+     * acá caducarían, y otro backend podría cargarlos mientras este todavía los tiene. Redis no depende de MySQL: que uno
      * esté caído no tiene por qué frenar al otro.
      */
     private val redisExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -1290,15 +1313,15 @@ object PlayerEventHandler {
         ServerTickEvents.END_SERVER_TICK.register { server ->
             if (++heartbeatTicks < CROSS_SERVER_HEARTBEAT_TICKS) return@register
             heartbeatTicks = 0
-            // La lista de conectados se saca ACA, en el hilo del servidor, y se le pasa al
-            // heartbeat ya congelada. Consultar la PlayerManager desde el dbExecutor seria
+            // La lista de conectados se saca ACÁ, en el hilo del servidor, y se le pasa al
+            // heartbeat ya congelada. Consultar la PlayerManager desde el dbExecutor sería
             // leer estado del servidor desde otro hilo.
             val aqui = server.playerManager.playerList.mapTo(HashSet()) { it.uuid }
-            // "Sigue aqui" incluye a quien ya se desconecto pero TIENE UN GUARDADO EN VUELO.
+            // "Sigue aqui" incluye a quien ya se desconectó pero TIENE UN GUARDADO EN VUELO.
             // Sin esa parte, el lock de un jugador que se va deja de renovarse en el instante
-            // en que sale de la playerlist, y con un persist lento —MySQL cargado, PC grande,
-            // cola del dbExecutor llena, o sea exactamente un reinicio masivo— caducaba
-            // MIENTRAS lo estabamos escribiendo. El otro backend leia la fila a mitad de
+            // en que sale de la playerlist, y con un persist lento (MySQL cargado, PC grande,
+            // cola del dbExecutor llena, o sea exactamente un reinicio masivo) caducaba
+            // MIENTRAS lo estabamos escribiendo. El otro backend leía la fila a mitad de
             // escritura, que es justo lo que el lock existe para impedir.
             if (!latiendo.compareAndSet(false, true)) return@register
             redisExecutor.submit {
@@ -1316,8 +1339,8 @@ object PlayerEventHandler {
     /**
      * @param callback recibe true si se insertó un backup nuevo, false si se omitió por no
      *   haber cambios (dedup) o si falló. Se invoca en el hilo del servidor.
-     *   Antes `/cg backup` respondía "✔ Backup creado" en la línea siguiente a disparar el
-     *   trabajo asíncrono, sin esperar el resultado: si fallaba, el staff igual veía el tick verde.
+     *   Así `/cg backup` no responde "✔ Backup creado" antes de saber el resultado: si falla,
+     *   el staff no ve el tick verde.
      */
     fun saveBackupAsync(player: ServerPlayerEntity, callback: ((Boolean) -> Unit)? = null) {
         val uuid = player.uuid
@@ -1342,9 +1365,7 @@ object PlayerEventHandler {
         }
     }
 
-    // ══════════════════════════════════════════════════════
     // API para comandos: force save / force restore
-    // ══════════════════════════════════════════════════════
 
     fun forceSave(player: ServerPlayerEntity, callback: ((Boolean) -> Unit)? = null) {
         val uuid = player.uuid
@@ -1376,8 +1397,8 @@ object PlayerEventHandler {
 
     /** Restaura desde MySQL solo los [types] indicados (por defecto todos). */
     /**
-     * @param callback recibe la lista de tipos que NO se pudieron aplicar (vacia = todo bien),
-     *   o null si no habia datos o la carga desde MySQL fallo.
+     * @param callback recibe la lista de tipos que NO se pudieron aplicar (vacía = todo bien),
+     *   o null si no había datos o la carga desde MySQL falló.
      */
     fun forceRestore(
         player: ServerPlayerEntity,
@@ -1405,9 +1426,8 @@ object PlayerEventHandler {
                 player.server.execute {
                     val fallidos = SyncService.fallidos(SyncService.apply(player, data.toBlobMap(), types))
                     if (fallidos.isNotEmpty()) {
-                        // Antes el restore decia "completado" pasara lo que pasara. Y en una
-                        // restauracion completa ademas marcaba al jugador como cargado: con un tipo
-                        // a medio aplicar, eso habilitaba a guardar su estado mezclado sobre MySQL.
+                        // No se dice "completado" ni se marca al jugador como cargado: con un tipo
+                        // a medio aplicar, eso habilitaría a guardar su estado mezclado sobre MySQL.
                         CobblemonGuard.logger.error("[RESTORE] Force-restore de $name: no se pudo aplicar ${fallidos.joinToString(", ")}.")
                         callback?.invoke(fallidos)
                         return@execute

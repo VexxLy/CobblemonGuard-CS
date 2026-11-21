@@ -15,18 +15,16 @@ import java.io.ByteArrayOutputStream
  * por lo que quedan incluidos automáticamente aquí.
  *
  * API real de Yarn 1.21.1 (verificado con javap):
- *   PlayerInventory.writeNbt(NbtList)         — sin registries
- *   PlayerInventory.readNbt(NbtList)          — sin registries
- *   SimpleInventory.toNbtList(WrapperLookup)  — CON registries
- *   NbtSizeTracker.of(long)                   — factory estático
+ *   PlayerInventory.writeNbt(NbtList)         sin registries
+ *   PlayerInventory.readNbt(NbtList)          sin registries
+ *   SimpleInventory.toNbtList(WrapperLookup)  CON registries
+ *   NbtSizeTracker.of(long)                   factory estático
  */
 object InventorySync {
 
     private const val NBT_SIZE_LIMIT = 50L * 1024 * 1024 // 50 MB
 
-    // ──────────────────────────────────────────────
     // Inventario principal (36 slots + armadura + offhand)
-    // ──────────────────────────────────────────────
 
     fun serialize(player: ServerPlayerEntity): ByteArray? {
         return runCatching {
@@ -43,8 +41,8 @@ object InventorySync {
     fun deserialize(player: ServerPlayerEntity, data: ByteArray): Resultado {
         return runCatching {
             val root = decompress(data)
-            // serialize() escribe esta clave SIEMPRE. Si no esta, el blob no es nuestro o
-            // esta roto, y aplicarlo "en silencio" dejaria al jugador con su inventario local.
+            // serialize() escribe esta clave SIEMPRE. Si no está, el blob no es nuestro o
+            // está roto, y aplicarlo "en silencio" dejaría al jugador con su inventario local.
             if (!root.contains("inventory")) {
                 CobblemonGuard.logger.error("[Inventario] El blob de ${player.name.string} no tiene la clave 'inventory'.")
                 return Resultado.FALLO
@@ -59,9 +57,7 @@ object InventorySync {
         }
     }
 
-    // ──────────────────────────────────────────────
-    // Ender Chest (SimpleInventory — SÍ necesita registries)
-    // ──────────────────────────────────────────────
+    // Ender Chest (SimpleInventory, SÍ necesita registries)
 
     fun serializeEnderChest(player: ServerPlayerEntity): ByteArray? {
         return runCatching {
@@ -93,9 +89,7 @@ object InventorySync {
         }
     }
 
-    // ──────────────────────────────────────────────
     // Helpers NBT comprimido
-    // ──────────────────────────────────────────────
 
     private fun compress(nbt: NbtCompound): ByteArray {
         val baos = ByteArrayOutputStream()
@@ -104,7 +98,7 @@ object InventorySync {
     }
 
     private fun decompress(data: ByteArray): NbtCompound {
-        // NbtSizeTracker.of(long) — nombre correcto en Yarn 1.21.1 (no ofBytes)
+        // NbtSizeTracker.of(long): nombre correcto en Yarn 1.21.1 (no ofBytes)
         return NbtIo.readCompressed(ByteArrayInputStream(data), NbtSizeTracker.of(NBT_SIZE_LIMIT))
     }
 }

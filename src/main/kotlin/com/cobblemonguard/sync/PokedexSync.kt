@@ -22,7 +22,7 @@ import java.io.ByteArrayOutputStream
  * distinto según el servidor (y las recompensas de la Pokédex de cobblemmo-server medían cosas
  * distintas en cada uno).
  *
- * ── API real verificada con javap (Cobblemon 1.8.0) ──────────────────────────────────────
+ * API real verificada con javap (Cobblemon 1.8.0):
  *   Cobblemon.INSTANCE.getPlayerDataManager()                 → PlayerInstancedDataStoreManager
  *   PlayerInstancedDataStoreManager.getPokedexData(ServerPlayerEntity) → PokedexManager (vivo)
  *   PokedexManager.Companion.getCODEC()                       → Codec<PokedexManager>

@@ -7,7 +7,7 @@ import net.minecraft.server.network.ServerPlayerEntity
  * Registro central de todos los [DataSyncer]. Cada entrada es un adaptador fino sobre los
  * objetos de sincronización existentes (InventorySync, PokemonPCSync, ...).
  *
- * IMPORTANTE — el ORDEN importa al DESERIALIZAR:
+ * IMPORTANTE: el ORDEN importa al DESERIALIZAR:
  *   las mochilas (contenido en world-data) van ANTES que los accesorios (el ítem que las
  *   referencia). Por eso BACKPACKS aparece antes que ACCESSORIES en la lista.
  */
@@ -49,5 +49,7 @@ object SyncRegistry {
             PokedexSync::serialize) { p, d, _ -> PokedexSync.deserialize(p, d) },
         syncer(DataType.MOCHILA, { cfg.syncMochilaCobblemmoEffective },
             CobbleMmoMochilaSync::serialize) { p, d, _ -> CobbleMmoMochilaSync.deserialize(p, d) },
+        syncer(DataType.RCT, { cfg.syncRctEffective },
+            RctSync::serialize) { p, d, _ -> RctSync.deserialize(p, d) },
     )
 }

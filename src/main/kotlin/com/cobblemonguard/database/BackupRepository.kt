@@ -8,9 +8,7 @@ import java.util.zip.CRC32
 
 class BackupRepository(private val db: DatabaseManager) {
 
-    // ──────────────────────────────────────────────
     // Deduplicación de backups (ver saveBackup)
-    // ──────────────────────────────────────────────
 
     private data class LastBackup(val fingerprint: String, val insertedAtMillis: Long)
 
@@ -41,17 +39,15 @@ class BackupRepository(private val db: DatabaseManager) {
         return sb.toString()
     }
 
-    // ──────────────────────────────────────────────
     // Guardar backup
-    // ──────────────────────────────────────────────
 
     /**
      * Inserta un backup del estado del jugador.
      *
      * Con `backupDedupEnabled` (default) NO inserta si el estado es idéntico al del último
      * backup insertado para ese jugador. Con el intervalo por defecto (5 min) la enorme
-     * mayoría de los backups son copias exactas del anterior —la PC de un jugador casi
-     * nunca cambia entre dos backups seguidos— y cada fila guarda el estado COMPLETO
+     * mayoría de los backups son copias exactas del anterior (la PC de un jugador casi
+     * nunca cambia entre dos backups seguidos) y cada fila guarda el estado COMPLETO
      * (inventario + ender + PC + party + accesorios + mochilas), así que en una red con
      * decenas de jugadores activos son decenas de GB de duplicados. El rollback no pierde
      * nada: el backup que ya está en la tabla representa exactamente ese mismo estado.
@@ -74,12 +70,13 @@ class BackupRepository(private val db: DatabaseManager) {
         economy: ByteArray? = null,
         ftbQuests: ByteArray? = null,
         cobblemonPokedex: ByteArray? = null,
-        cobblemmoMochila: ByteArray? = null
+        cobblemmoMochila: ByteArray? = null,
+        rctProgreso: ByteArray? = null
     ): Boolean {
         val now = System.currentTimeMillis()
         var fp: String? = null
         if (CobblemonGuard.config.backupDedupEnabledEffective) {
-            fp = fingerprint(listOf(inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila))
+            fp = fingerprint(listOf(inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila, rctProgreso))
             val last = lastBackupByPlayer[uuid]
             if (last != null && last.fingerprint == fp && now - last.insertedAtMillis < FORCE_INTERVAL_MS) {
                 CobblemonGuard.logger.debug("[Backup] $playerName sin cambios desde el último backup — no se inserta.")
@@ -89,8 +86,8 @@ class BackupRepository(private val db: DatabaseManager) {
 
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                INSERT INTO cobblemonguard_backups (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO cobblemonguard_backups (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent()).use { stmt ->
                 stmt.setString(1, uuid.toString())
                 stmt.setString(2, playerName)
@@ -104,6 +101,7 @@ class BackupRepository(private val db: DatabaseManager) {
                 stmt.setBytes(10, ftbQuests)
                 stmt.setBytes(11, cobblemonPokedex)
                 stmt.setBytes(12, cobblemmoMochila)
+                stmt.setBytes(13, rctProgreso)
                 stmt.executeUpdate()
             }
         }
@@ -111,9 +109,7 @@ class BackupRepository(private val db: DatabaseManager) {
         return true
     }
 
-    // ──────────────────────────────────────────────
     // Listar backups de un jugador
-    // ──────────────────────────────────────────────
 
     fun listBackups(uuid: UUID, playerName: String? = null): List<Timestamp> {
         val byUuid = queryBackupTimestamps("uuid = ?", uuid.toString())
@@ -146,9 +142,7 @@ class BackupRepository(private val db: DatabaseManager) {
         return result
     }
 
-    // ──────────────────────────────────────────────
     // Obtener el backup más cercano a una fecha
-    // ──────────────────────────────────────────────
 
     data class BackupEntry(
         val savedAt: Timestamp,
@@ -161,7 +155,8 @@ class BackupRepository(private val db: DatabaseManager) {
         val economy: ByteArray? = null,
         val ftbQuests: ByteArray? = null,
         val cobblemonPokedex: ByteArray? = null,
-        val cobblemmoMochila: ByteArray? = null
+        val cobblemmoMochila: ByteArray? = null,
+        val rctProgreso: ByteArray? = null
     )
 
     fun getClosestBackup(uuid: UUID, targetTimeMillis: Long, playerName: String? = null): BackupEntry? {
@@ -180,7 +175,7 @@ class BackupRepository(private val db: DatabaseManager) {
     private fun queryClosestBackup(where: String, vararg params: Any): BackupEntry? {
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                SELECT saved_at, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
+                SELECT saved_at, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso
                 FROM cobblemonguard_backups
                 WHERE $where
                 ORDER BY saved_at DESC
@@ -205,7 +200,8 @@ class BackupRepository(private val db: DatabaseManager) {
                         economy        = rs.getBytes("economy"),
                         ftbQuests      = rs.getBytes("ftb_quests"),
                         cobblemonPokedex = rs.getBytes("cobblemon_pokedex"),
-                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila")
+                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila"),
+                        rctProgreso    = rs.getBytes("rct_progreso")
                     )
                 }
             }
@@ -213,15 +209,13 @@ class BackupRepository(private val db: DatabaseManager) {
         return null
     }
 
-    // ──────────────────────────────────────────────
     // Limpiar backups viejos
-    // ──────────────────────────────────────────────
 
     /**
      * Borra backups más viejos que [retentionHours], EN LOTES.
      *
-     * Antes era un único DELETE sin LIMIT. Si alguien bajaba la retención, o si el mod
-     * estuvo días sin limpiar, ese DELETE podía tocar cientos de miles de filas con
+     * Un único DELETE sin LIMIT no sirve: si alguien baja la retención, o si el mod
+     * estuvo días sin limpiar, ese DELETE puede tocar cientos de miles de filas con
      * LONGBLOBs en una sola transacción: undo log enorme, locks largos en InnoDB y el
      * resto de las consultas del servidor esperando detrás. En lotes de 500 cada
      * transacción es corta y MySQL puede intercalar el resto del trabajo.
@@ -251,9 +245,7 @@ class BackupRepository(private val db: DatabaseManager) {
         }
     }
 
-    // ──────────────────────────────────────────────
     // Parsear tiempo ("30m", "1h", "2h", "3d", "10min", "2dias")
-    // ──────────────────────────────────────────────
 
     companion object {
         fun parseTimeAgo(input: String): Long? {

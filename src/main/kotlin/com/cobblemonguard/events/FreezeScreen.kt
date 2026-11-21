@@ -33,8 +33,8 @@ object FreezeScreen {
      *
      * Sin esto, un jugador que se desconecta mientras está congelado (expulsado porque la
      * BD no respondía, caída de red a mitad de la carga, crash del servidor) queda con
-     * Slowness 128 guardado en su playerdata de Minecraft. Normalmente se autocorrige —
-     * al reconectar, freeze() + unfreeze() lo limpia — pero si mientras tanto alguien
+     * Slowness 128 guardado en su playerdata de Minecraft. Normalmente se autocorrige:
+     * al reconectar, freeze() + unfreeze() lo limpia, pero si mientras tanto alguien
      * DESACTIVA el mod para investigar (que es exactamente lo que uno hace cuando el mod
      * está fallando), esos jugadores quedan inmóviles y ya no hay nada que se los saque.
      *
@@ -56,7 +56,7 @@ object FreezeScreen {
      * secundaria, pero el cursor y la grilla no son parte del inventario: quedan como estaban.
      * Al entrar los dos están vacíos (vanilla no los persiste), así que lo que haya ahí lo puso
      * el jugador DURANTE la ventana de carga, sacándolo de su inventario LOCAL. Si se los dejaba,
-     * después de aplicar MySQL —que todavía tiene esos ítems— volvían al inventario al cerrar la
+     * después de aplicar MySQL (que todavía tiene esos ítems) volvían al inventario al cerrar la
      * pantalla y existían dos veces. Repetible en cada ingreso.
      *
      * Se descartan, no se devuelven: son copias locales de algo que MySQL ya trae. Y la grilla se
@@ -84,8 +84,8 @@ object FreezeScreen {
      * este clear(), cuando ya no está congelado y [FreezeGuard] ya no lo intercepta.
      *
      * El caso concreto: abre su inventario durante la ventana de carga, agarra un stack con el
-     * cursor o lo pone en la grilla, y lo expulsan porque la BD no respondió. El stack quedaba
-     * tirado en el mundo de este backend y, en su próximo ingreso, MySQL le devolvía el mismo
+     * cursor o lo pone en la grilla, y lo expulsan porque la BD no respondió. El stack quedaría
+     * tirado en el mundo de este backend y, en su próximo ingreso, MySQL le devolvería el mismo
      * stack en el inventario.
      *
      * Devolverlo al inventario local no duplica nada: ese inventario no se guarda en MySQL
@@ -125,7 +125,7 @@ object FreezeScreen {
         player.removeStatusEffect(StatusEffects.SLOWNESS)
     }
 
-    // ── Títulos / pantallas ────────────────────────────────────────────────
+    // Títulos / pantallas
 
     /** Mientras se conecta a la BD (antes de saber si es primer ingreso). */
     fun connecting(player: ServerPlayerEntity) {

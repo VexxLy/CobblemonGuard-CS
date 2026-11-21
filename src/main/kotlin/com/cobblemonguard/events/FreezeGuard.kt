@@ -56,7 +56,7 @@ import net.minecraft.util.TypedActionResult
 object FreezeGuard {
 
     fun register() {
-        // ── Interacciones ───────────────────────────────────────────────────
+        // Interacciones
         // Abrir cofres, barriles, el cofre de ender, hornos: es la forma de sacar ítems del
         // inventario local sin tirarlos al piso.
         UseBlockCallback.EVENT.register { player, _, _, _ ->
@@ -81,7 +81,7 @@ object FreezeGuard {
             !congelado(player)
         }
 
-        // ── Daño ────────────────────────────────────────────────────────────
+        // Daño
         // Si muere durante la ventana, suelta todo el inventario LOCAL al piso; después se le
         // aplica el de MySQL y lo que quedó tirado existe dos veces. Y aparte, con Lentitud 128
         // no puede escapar: un jugador que entraba en medio de mobs se moría esperando a la BD.
@@ -89,7 +89,7 @@ object FreezeGuard {
             !(entity is ServerPlayerEntity && FreezeScreen.isFrozen(entity.uuid))
         }
 
-        // ── Ítems soltados ──────────────────────────────────────────────────
+        // Ítems soltados
         // Tirar un ítem (Q) no tiene evento en Fabric. Lo que sí se ve es el ItemEntity que
         // aparece en el mundo, y se lo vacía en el mismo instante en que se carga.
         ServerEntityEvents.ENTITY_LOAD.register { entity, _ ->
@@ -135,7 +135,7 @@ object FreezeGuard {
         if (stack.isEmpty) {
             item.setStack(ItemStack.EMPTY)
         } else {
-            // No debería pasar —el hueco del que salió sigue libre—, pero si no entró todo, lo
+            // No debería pasar (el hueco del que salió sigue libre), pero si no entró todo, lo
             // que sobra se queda en el ItemEntity en vez de perderse.
             item.setStack(stack)
             CobblemonGuard.logger.warn(

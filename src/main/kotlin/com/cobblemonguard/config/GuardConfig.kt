@@ -17,7 +17,7 @@ data class GuardConfig(
     val password: String = "tu_password_aqui",
 
     // Pool de conexiones. En el apagado del servidor se guardan TODOS los jugadores
-    // online EN PARALELO — si poolSize es menor que el pico de jugadores simultáneos,
+    // online EN PARALELO: si poolSize es menor que el pico de jugadores simultáneos,
     // los guardados se hacen cola esperando una conexión libre y el apagado puede tardar
     // más (o, con hosting que mata el proceso rápido, no llegar a terminar). Regla
     // aproximada: al menos tantas conexiones como jugadores simultáneos esperados en un
@@ -34,18 +34,18 @@ data class GuardConfig(
     // Con identifyByName=false (modo UUID, el normal en online): si NO existe ninguna
     // fila para el UUID del jugador, antes de asumir "jugador nuevo" se intenta UNA
     // búsqueda de respaldo por player_name (la fila más reciente con ese nombre). Si la
-    // encuentra, la "reclama" para el UUID actual (UPDATE del uuid de esa fila) — de ahí
+    // encuentra, la "reclama" para el UUID actual (UPDATE del uuid de esa fila), y de ahí
     // en adelante ya matchea directo por UUID, sin necesitar el respaldo de nuevo.
     // Pensado para: migrar un server de offline→online (o viceversa), un jugador que
     // perdió su UUID original (reinstalación de un proxy/auth distinto), o cualquier
     // caso donde quedó una fila vieja asociada solo al nombre.
     // CUIDADO: si el nombre fue REUTILIZADO por otra persona (el dueño original lo dejó
-    // libre y alguien más lo tomó), esto podría reclamar la fila equivocada — es el
+    // libre y alguien más lo tomó), esto podría reclamar la fila equivocada: es el
     // mismo riesgo que ya asume `identifyByName=true`. No aplica cuando
     // identifyByName=true (ese modo ya busca por nombre directamente).
     //
     // Nullable A PROPÓSITO (no Boolean=true): Gson, al leer un config.json VIEJO (de
-    // antes de este campo) que no tiene esta clave, la deja en `null` — NO en el default
+    // antes de este campo) que no tiene esta clave, la deja en `null`, NO en el default
     // de Kotlin. Si fuera un Boolean plano, Gson la pondría en `false` (el default de
     // Java) para cualquiera que actualice desde una versión anterior, invirtiendo el
     // comportamiento pretendido. Usa siempre `identifyByNameFallbackEffective` (abajo),
@@ -79,19 +79,28 @@ data class GuardConfig(
     // cobblemmo-server en el backend, el tipo se omite solo.
     val syncMochilaCobblemmo: Boolean? = null,
 
+    // Progreso de Radical Cobblemon Trainers (entrenadores vencidos, series, tope de nivel).
+    // Nullable por lo mismo que syncFtbQuests. Sin RCT en el backend, el tipo se omite solo.
+    val syncRct: Boolean? = null,
+
+    // Registro de cuelgues de la base (logs/cobblemonguard-db.log, ver DbMonitor). Umbral en ms a
+    // partir del cual un préstamo de conexión o la sonda "SELECT 1" se anotan como lentos (0 apaga
+    // el monitor) y cada cuántos segundos corre la sonda. Nullable: un config.json viejo no las trae.
+    val dbMonitorUmbralMs: Int? = null,
+    val dbMonitorSondaSegundos: Int? = null,
+
     // Keys de moneda ("namespace:value") a sincronizar ADEMÁS de las que se logren
     // detectar automáticamente en Impactor (la detección automática usa `registered()`/
-    // `all()`, que el propio código marca como NO confirmada contra la API real — ver
-    // ImpactorEconomy — así que estas keys explícitas son la vía que SIEMPRE funciona,
+    // `all()`, que el propio código marca como NO confirmada contra la API real; ver
+    // ImpactorEconomy), así que estas keys explícitas son la vía que SIEMPRE funciona,
     // sin depender de esa detección).
     //
-    // Verificadas contra el economy.conf REAL de Impactor de este server (2026-09):
-    //   "impactor:dollars"     — el dólar (moneda PRIMARIA, "primary = true" en su config)
-    //   "impactor:arceuscoin"  — ArceusCoin
-    //   "impactor:eventpoints" — Event Points
-    // (el default previo traía "cobblemmo:arceuscoin", que NO es la key real — ese
-    // namespace no existe en el economy.conf de Impactor; era un respaldo que en la
-    // práctica nunca podía matchear nada).
+    // Verificadas contra el economy.conf de Impactor de este servidor:
+    //   "impactor:dollars": el dólar (moneda PRIMARIA, "primary = true" en su config)
+    //   "impactor:arceuscoin": ArceusCoin
+    //   "impactor:eventpoints": Event Points
+    // "cobblemmo:arceuscoin" NO es una key de Impactor: ese namespace no existe en su
+    // economy.conf.
     val economyCurrencyKeys: List<String> = listOf(
         "impactor:dollars",
         "impactor:arceuscoin",
@@ -135,7 +144,7 @@ data class GuardConfig(
 
     // No insertar un backup si el estado del jugador es IDÉNTICO al de su backup anterior.
     // Con el intervalo por defecto (5 min) la gran mayoría de los backups de un jugador son
-    // copias exactas de la anterior —su PC casi nunca cambia entre dos backups seguidos— y
+    // copias exactas de la anterior (su PC casi nunca cambia entre dos backups seguidos) y
     // cada fila guarda el estado COMPLETO (inventario + ender + PC + party + accesorios +
     // mochilas). En una red con decenas de jugadores activos eso son decenas de GB de
     // duplicados. Con esto activado se compara un hash del estado con el del último backup
@@ -146,15 +155,15 @@ data class GuardConfig(
     val backupDedupEnabled: Boolean? = null,
 
     // Escribir en cobblemonguard_sync_log SOLO los fallos, en vez de cada SAVE/LOAD.
-    // El log de éxitos era una fila (y una conexión extra del pool) por cada guardado de
-    // cada jugador — con auto-save activo son millones de filas al año y el doble de
+    // Registrar los éxitos es una fila (y una conexión extra del pool) por cada guardado de
+    // cada jugador: con auto-save activo son millones de filas al año y el doble de
     // tráfico a MySQL por guardado, para información que casi nunca se consulta.
     // Ponlo en false si estás depurando y querés el historial completo.
     val syncLogOnlyErrors: Boolean? = null,
 
     // Retención del log de sincronización, en horas (0 = no borrar nunca).
-    // Antes esta tabla no se limpiaba NUNCA — solo había un DELETE manual comentado en
-    // sql/setup.sql. Ahora se limpia en el mismo ciclo periódico que los backups.
+    // Se limpia en el mismo ciclo periódico que los backups (sql/setup.sql solo trae un
+    // DELETE comentado para correr a mano).
     val syncLogRetentionHours: Int? = null,
 
     // Discord Webhook
@@ -164,10 +173,10 @@ data class GuardConfig(
     val discordNotifySyncErrors: Boolean = true,
     val discordNotifyRollbacks: Boolean = true,
 
-    // ── Cross-server sync (red multi-backend detrás de Velocity) ──────────
+    // Cross-server sync (red multi-backend detrás de Velocity)
     // Cuando un jugador cambia de servidor Fabric (ej. overworld -> dimensión custom
     // en su propio backend), CADA backend ve esto como un DISCONNECT + JOIN normal e
-    // independiente — no hay forma de saber, sin coordinación externa, si el otro
+    // independiente: no hay forma de saber, sin coordinación externa, si el otro
     // backend YA terminó de guardar. Sin esto, el nuevo backend podría cargar del PC
     // desde disco/MySQL mientras el jugador SIGUE vivo en el otro proceso: dos copias
     // del mismo Pokémon en memoria a la vez = dupeo. Redis resuelve esto con un lock
@@ -209,9 +218,14 @@ data class GuardConfig(
     // 0 = no esperar (comportamiento viejo). Null = 5000. Máximo 30000.
     val esperaSinRedisMs: Long? = null,
 
-    // ── Sync en vivo de PASTURAS (ranchos) en redes multi-backend ─────────
+    // Dónde viven los locks cross-server: "mysql" (por defecto: tabla cobblemonguard_locks en la
+    // misma base, pool propio de 2 conexiones, sin límite de comandos) o "redis" (redisHost...).
+    // Null (config viejo) = "mysql".
+    val lockBackend: String? = null,
+
+    // Sync en vivo de PASTURAS (ranchos) en redes multi-backend
     // Las pasturas de Cobblemon acceden a la PC del dueño DIRECTO por UUID
-    // (Cobblemon.storage.getPC(uuid, registryAccess)), sin pasar por join/disconnect —
+    // (Cobblemon.storage.getPC(uuid, registryAccess)), sin pasar por join/disconnect,
     // así que si el dueño está online en OTRO backend, una pastura en ESTE backend puede
     // quedar leyendo una copia vieja de su PC hasta que el dueño vuelva a entrar acá (hoy
     // se autocorrige recién en ese próximo login, no en tiempo real).
@@ -220,40 +234,52 @@ data class GuardConfig(
     // Cobblemon) que SOLO actúa para jugadores OFFLINE en este backend: dispara un
     // refresco asíncrono desde MySQL hacia el store en vivo de Cobblemon en este backend
     // (mismo merge por UUID que usa el resto del mod). Nunca toca a un jugador online,
-    // nunca hace I/O de MySQL en el hilo del servidor, y nunca sirve datos directo — en el
+    // nunca hace I/O de MySQL en el hilo del servidor, y nunca sirve datos directo. En el
     // peor caso (falla, o Cobblemon cambió su API interna) simplemente queda inerte y todo
     // sigue exactamente como sin esta opción.
     //
     // Sin efecto si `crossServerSyncEnabled=false` (en single-server las pasturas ya son
-    // consistentes — comparten el mismo proceso). Por eso arranca en false: es la pieza
-    // más nueva/experimental del mod — actívala cuando ya tengas cross-server funcionando
+    // consistentes: comparten el mismo proceso). Por eso arranca en false: es la pieza
+    // más nueva/experimental del mod: actívala cuando ya tengas cross-server funcionando
     // bien y quieras cerrar este último gap.
     val livePastureSyncEnabled: Boolean = false
 ) {
-    /** Ver doc de [expulsarSiFallaAlCargar] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [expulsarSiFallaAlCargar]. Úsalo SIEMPRE en vez del campo directo. */
     val expulsarSiFallaAlCargarEffective: Boolean get() = expulsarSiFallaAlCargar ?: true
 
-    /** Ver doc de [syncFtbQuests] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [syncFtbQuests]. Úsalo SIEMPRE en vez del campo directo. */
     val syncFtbQuestsEffective: Boolean get() = syncFtbQuests ?: true
 
-    /** Ver doc de [syncPokedex] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [syncPokedex]. Úsalo SIEMPRE en vez del campo directo. */
     val syncPokedexEffective: Boolean get() = syncPokedex ?: true
 
-    /** Ver doc de [syncMochilaCobblemmo] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [syncMochilaCobblemmo]. Úsalo SIEMPRE en vez del campo directo. */
     val syncMochilaCobblemmoEffective: Boolean get() = syncMochilaCobblemmo ?: true
+
+    /** Ver doc de [syncRct]. Úsalo SIEMPRE en vez del campo directo. */
+    val syncRctEffective: Boolean get() = syncRct ?: true
+
+    /** Ver doc de [dbMonitorUmbralMs]. 5000 por defecto; 0 = monitor apagado. */
+    val dbMonitorUmbralMsEffective: Int get() = (dbMonitorUmbralMs ?: 5_000).coerceAtLeast(0)
+
+    /** Ver doc de [dbMonitorSondaSegundos]. 30 por defecto. */
+    val dbMonitorSondaSegundosEffective: Int get() = (dbMonitorSondaSegundos ?: 30).coerceIn(5, 3600)
 
     val esperaSinRedisMsEffective: Long get() = (esperaSinRedisMs ?: 5_000L).coerceIn(0L, 30_000L)
 
-    /** Ver doc de [identifyByNameFallback] — úsalo SIEMPRE en vez del campo directo. */
+    /** "mysql" o "redis". Ver doc de [lockBackend]. Úsalo SIEMPRE en vez del campo directo. */
+    val lockBackendEffective: String get() = if (lockBackend?.trim()?.lowercase() == "redis") "redis" else "mysql"
+
+    /** Ver doc de [identifyByNameFallback]. Úsalo SIEMPRE en vez del campo directo. */
     val identifyByNameFallbackEffective: Boolean get() = identifyByNameFallback ?: true
 
-    /** Ver doc de [backupDedupEnabled] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [backupDedupEnabled]. Úsalo SIEMPRE en vez del campo directo. */
     val backupDedupEnabledEffective: Boolean get() = backupDedupEnabled ?: true
 
-    /** Ver doc de [syncLogOnlyErrors] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [syncLogOnlyErrors]. Úsalo SIEMPRE en vez del campo directo. */
     val syncLogOnlyErrorsEffective: Boolean get() = syncLogOnlyErrors ?: true
 
-    /** Ver doc de [syncLogRetentionHours] — úsalo SIEMPRE en vez del campo directo. */
+    /** Ver doc de [syncLogRetentionHours]. Úsalo SIEMPRE en vez del campo directo. */
     val syncLogRetentionHoursEffective: Int get() = syncLogRetentionHours ?: 168
 
     companion object {

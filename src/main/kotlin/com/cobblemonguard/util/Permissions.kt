@@ -7,14 +7,14 @@ import net.minecraft.server.network.ServerPlayerEntity
 /**
  * Permisos por NODO vía LuckPerms, con fallback a nivel de OP.
  *
- * ── El problema ────────────────────────────────────────────────────────────────
+ * El problema:
  * Todos los subcomandos estaban detrás de `hasPermissionLevel(2)`, es decir OP. Para
  * dejar que un moderador pueda hacer `/cg backups` o `/cg rollback` había que darle OP
  * completo, con todo lo que eso habilita en el resto del servidor (y en el resto de los
  * mods). En una red que ya usa LuckPerms para todo lo demás, eso es un agujero
  * innecesario.
  *
- * ── La solución ────────────────────────────────────────────────────────────────
+ * La solución:
  * Acceso a LuckPerms por REFLEXIÓN, igual que con Cobblemon/Impactor/Accessories: no se
  * compila contra él, así que el mod sigue funcionando exactamente igual en un servidor
  * sin LuckPerms.
@@ -48,7 +48,7 @@ object Permissions {
         }
     }
 
-    /** `LuckPermsProvider.get()` — la instancia es un singleton, se resuelve una vez. */
+    /** `LuckPermsProvider.get()`: la instancia es un singleton, se resuelve una vez. */
     private val luckPerms: Any? by lazy {
         val cls = luckPermsClass ?: return@lazy null
         runCatching { cls.getMethod("get").invoke(null) }
@@ -56,7 +56,7 @@ object Permissions {
             .getOrNull()
     }
 
-    /** `luckPerms.getPlayerAdapter(ServerPlayerEntity::class.java)` — también estable. */
+    /** `luckPerms.getPlayerAdapter(ServerPlayerEntity::class.java)`: también estable. */
     private val playerAdapter: Any? by lazy {
         val lp = luckPerms ?: return@lazy null
         runCatching {

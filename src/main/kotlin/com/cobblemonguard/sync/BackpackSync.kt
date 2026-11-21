@@ -40,7 +40,7 @@ object BackpackSync {
 
     private const val NBT_SIZE_LIMIT = 100L * 1024 * 1024
 
-    // ── Reflexión perezosa de SB / sophisticatedcore ───────────────────────
+    // Reflexión perezosa de SB / sophisticatedcore
 
     private val backpackStorageClass by lazy {
         runCatching { Class.forName("net.p3pp3rf1y.sophisticatedbackpacks.backpack.BackpackStorage") }.getOrNull()
@@ -67,7 +67,7 @@ object BackpackSync {
         }
     }
 
-    // ── Serializar ─────────────────────────────────────────────────────────
+    // Serializar
 
     fun serialize(player: ServerPlayerEntity): ByteArray? {
         if (!isLoaded) return null
@@ -123,22 +123,22 @@ object BackpackSync {
         }.getOrNull()
     }
 
-    // ── Deserializar ───────────────────────────────────────────────────────
+    // Deserializar
 
     fun deserialize(player: ServerPlayerEntity, data: ByteArray): Resultado {
         if (!isLoaded) return Resultado.OMITIDO
         if (!player.server.isOnThread) {
-            // Nadie deberia llamar esto fuera del hilo del servidor; si pasa, es un bug y las
-            // mochilas quedan con su contenido local. Eso es un fallo, no una omision.
+            // Nadie debería llamar esto fuera del hilo del servidor; si pasa, es un bug y las
+            // mochilas quedan con su contenido local. Eso es un fallo, no una omisión.
             CobblemonGuard.logger.error("[Mochilas] deserialize() fuera del hilo del servidor — no se restauran las de ${player.name.string}.")
             return Resultado.FALLO
         }
         return runCatching {
             val storage = backpackStorage() ?: run {
                 // En algunos servidores BackpackStorage.get() cae en su rama de CLIENTE y no se
-                // puede usar nunca (ver [disabled]). Ahi el contenido de las mochilas no se
+                // puede usar nunca (ver [disabled]). Ahí el contenido de las mochilas no se
                 // sincroniza en este backend por diseño, y eso ya se aviso al desactivarlo.
-                // Tratarlo como FALLO dejaria sin entrar a todo el que alguna vez tuvo una
+                // Tratarlo como FALLO dejaría sin entrar a todo el que alguna vez tuvo una
                 // mochila, porque esa columna nunca vuelve a NULL.
                 //
                 // Pero en una RED eso no alcanza: el ítem de la mochila llega por el inventario de
@@ -163,7 +163,7 @@ object BackpackSync {
                 if (uuid == null) {
                     // Una entrada sin uuid no se puede asociar a ninguna mochila: no hay nada
                     // que restaurar ni nada local que quede desactualizado por culpa de ella.
-                    CobblemonGuard.logger.warn("[Mochilas] Entrada #$i de ${player.name.string} sin uuid valido — se ignora.")
+                    CobblemonGuard.logger.warn("[Mochilas] Entrada #$i de ${player.name.string} sin uuid válido — se ignora.")
                     continue
                 }
                 val contents = entry.getCompound("data")
@@ -181,7 +181,7 @@ object BackpackSync {
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    // Helpers
 
     /** Todos los ItemStacks que lleva el jugador: inventario + ender + accesorios. */
     private fun carriedStacks(player: ServerPlayerEntity): List<net.minecraft.item.ItemStack> {
@@ -216,7 +216,7 @@ object BackpackSync {
     // Si BackpackStorage.get() falla (en algunos servers cae a su rama de cliente y
     // toca net.minecraft.class_310), auto-desactivamos el volcado para no spamear el log.
     // El ítem de la mochila igual se guarda vía inventario/accesorios, y su contenido
-    // persiste en el guardado del mundo — así que no se pierde nada en un solo servidor.
+    // persiste en el guardado del mundo, así que no se pierde nada en un solo servidor.
     @Volatile
     private var disabled = false
 
@@ -244,9 +244,9 @@ object BackpackSync {
 
     private fun setContents(storage: Any, uuid: UUID, contents: NbtCompound): Boolean {
         return runCatching {
-            // Antes era "?.invoke(...); true": si el metodo no existia (Sophisticated Backpacks
-            // lo renombro) el ?. lo salteaba y igual devolvia true. Cada mochila contaba como
-            // restaurada sin que se hubiera escrito nada.
+            // No "?.invoke(...); true": si el método no existe (Sophisticated Backpacks lo
+            // renombra), el ?. lo saltea y devolvería true igual. Cada mochila contaría como
+            // restaurada sin que se haya escrito nada.
             val m = ReflectCache.method(storage.javaClass, "setBackpackContents", 2) ?: return false
             m.invoke(storage, uuid, contents)
             true

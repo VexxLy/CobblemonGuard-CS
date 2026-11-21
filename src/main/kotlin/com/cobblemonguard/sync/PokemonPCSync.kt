@@ -29,6 +29,7 @@ object PokemonPCSync {
             val pc = CobblemonStorage.getPC(player) ?: return null
             val registries = player.server.registryManager
             val nbt = CobblemonStorage.saveStore(pc, registries) ?: return null
+            CobblemonStorage.marcarGuardado(nbt)
 
             val baos = ByteArrayOutputStream()
             NbtIo.writeCompressed(nbt, baos)
@@ -43,27 +44,31 @@ object PokemonPCSync {
      * @param onlyIfEmpty si true, NO toca la PC si el jugador ya tiene pokémon en ella
      *   (caso ingreso normal EN SINGLE-SERVER: Cobblemon ya la cargó del disco → no
      *   interferir, evita fantasmas/duplicados). En false (restore/rollback de admin, o
-     *   ingreso normal cuando `crossServerSyncEnabled=true` — ver PlayerEventHandler)
+     *   ingreso normal cuando `crossServerSyncEnabled=true`. Ver PlayerEventHandler)
      *   SÍ se aplica MySQL, mezclando por UUID vía [CobblemonStorage.copyPCToLive] (solo
      *   toca lo que difiere, no duplica). En redes multi-backend "ya tiene pokémon" no
-     *   implica estar al día — cada backend tiene su propio disco local — por eso ahí NO
+     *   implica estar al día (cada backend tiene su propio disco local) por eso ahí NO
      *   se debe pasar true.
      */
     fun deserialize(player: ServerPlayerEntity, data: ByteArray, onlyIfEmpty: Boolean = false): Resultado {
-        // Sin Cobblemon en este backend no hay nada que aplicar: es una omision, no un fallo.
+        // Sin Cobblemon en este backend no hay nada que aplicar: es una omisión, no un fallo.
         if (!CobblemonStorage.isLoaded) return Resultado.OMITIDO
         return runCatching {
             // PROTECCIÓN ANTI-CERO: si el snapshot de la BD está VACÍO, NO tocamos la PC
             // del jugador (podría tener pokémon vivos en el guardado de Cobblemon).
-            if (!CobblemonStorage.blobHasPokemon(data)) {
+            // Un vacío que GUARD guardó con su marca es real (el jugador dejó la PC sin Pokémon)
+            // y se aplica, salvo en single-server, donde manda el disco local. Sin la marca es un
+            // snapshot viejo o migrado y no se toca nada.
+            val conPokemon = CobblemonStorage.blobHasPokemon(data)
+            if (!conPokemon && (onlyIfEmpty || !CobblemonStorage.blobVacioConfirmado(data))) {
                 CobblemonGuard.logger.info("[PC] Snapshot de ${player.name.string} vacío en BD — se conserva su PC actual.")
                 return Resultado.OMITIDO
             }
 
-            // Cobblemon SI esta cargado (se chequeo arriba), asi que no poder obtener el store
-            // vivo es la reflexion rota, no una omision.
+            // Cobblemon SI está cargado (se chequeo arriba), así que no poder obtener el store
+            // vivo es la reflexión rota, no una omisión.
             val live = CobblemonStorage.getPC(player) ?: run {
-                CobblemonGuard.logger.error("[PC] No se pudo obtener la PC viva de ${player.name.string} — ¿cambio la API de Cobblemon?")
+                CobblemonGuard.logger.error("[PC] No se pudo obtener la PC viva de ${player.name.string} — ¿cambió la API de Cobblemon?")
                 return Resultado.FALLO
             }
 
@@ -89,8 +94,11 @@ object PokemonPCSync {
             // Mezcla estricta: además de altas y bajas por UUID, actualiza el CONTENIDO de los
             // Pokémon que ya estaban (nivel, movimientos, objeto equipado). Lanza si no pudo,
             // y el getOrElse de abajo lo convierte en FALLO.
-            val cambios = CobblemonStorage.mezclarPC(detached, live, registries, esperaPokemon = true)
+            val cambios = CobblemonStorage.mezclarPC(detached, live, registries, esperaPokemon = conPokemon)
             val changed = cambios > 0
+            if (!conPokemon && changed) {
+                CobblemonGuard.logger.info("[PC] ${player.name.string} dejó la PC vacía en otro backend: se vacía también acá.")
+            }
             if (changed) CobblemonStorage.sendTo(live, player)
             CobblemonGuard.logger.debug("[PC] Restaurado ${player.name.string} (cambios=$changed).")
             Resultado.APLICADO

@@ -5,9 +5,7 @@ import java.util.UUID
 
 class PlayerDataRepository(private val db: DatabaseManager) {
 
-    // ──────────────────────────────────────────────
     // Guardar datos de un jugador
-    // ──────────────────────────────────────────────
 
     /**
      * Guarda el estado del jugador.
@@ -15,23 +13,23 @@ class PlayerDataRepository(private val db: DatabaseManager) {
      * <h2>Un null NUNCA pisa una columna</h2>
      *
      * Cada columna se escribe con {@code COALESCE(valor_nuevo, valor_actual)}: si el
-     * serializador devolvio null, la columna se queda como estaba en vez de ponerse en NULL.
+     * serializador devolvió null, la columna se queda como estaba en vez de ponerse en NULL.
      *
-     * No es paranoia. Antes el UPSERT escribia las nueve columnas siempre, y el null que
-     * devuelve un serializador significa DOS cosas incompatibles: "este tipo esta desactivado
-     * en la config" y "la serializacion fallo" (todos atrapan su excepcion y devuelven null).
-     * El caso feo: todo el acceso a Cobblemon es por reflexion por nombre, y el mod acepta
-     * cobblemon >= 1.8.0. Si en alguna version cambia getStorage o saveToNBT, PokemonPCSync
-     * devuelve null y CADA guardado de CADA jugador pone cobblemon_pc = NULL. La PC de todo el
-     * servidor se vacia en horas, y el backup periodico usa el mismo serializador, asi que
-     * copia el mismo NULL. Con COALESCE, el peor caso pasa a ser "los datos se congelan en el
-     * ultimo estado bueno", que se nota y se arregla.
+     * No es paranoia. El null que devuelve un serializador significa DOS cosas incompatibles: "este tipo está desactivado
+     * en la config" y "la serialización falló" (todos atrapan su excepción y devuelven null).
+     * El caso feo: todo el acceso a Cobblemon es por reflexión por nombre, y el mod acepta
+     * cobblemon >= 1.8.0. Si en alguna versión cambia getStorage o saveToNBT, PokemonPCSync
+     * devuelve null y, si el UPSERT escribiera las nueve columnas siempre, CADA guardado de CADA
+     * jugador pondría cobblemon_pc = NULL. La PC de todo el
+     * servidor se vaciaría en horas, y el backup periódico usa el mismo serializador, así que
+     * copiaría el mismo NULL. Con COALESCE, el peor caso pasa a ser "los datos se congelan en el
+     * último estado bueno", que se nota y se arregla.
      *
-     * Un null nunca es un dato legitimo que haya que escribir:
-     * - PC y equipo producen NBT valido aunque esten vacios.
+     * Un null nunca es un dato legítimo que haya que escribir:
+     * - PC y equipo producen NBT válido aunque estén vacíos.
      * - Las mochilas solo guardan CONTENIDOS por UUID; una columna vieja no resucita nada,
      *   porque el item de la mochila viaja en el inventario, que si se sincroniza.
-     * - Un saldo viejo es mejor que ningun saldo.
+     * - Un saldo viejo es mejor que ningún saldo.
      */
     fun savePlayerData(
         uuid: UUID,
@@ -45,18 +43,19 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         economy: ByteArray? = null,
         ftbQuests: ByteArray? = null,
         cobblemonPokedex: ByteArray? = null,
-        cobblemmoMochila: ByteArray? = null
+        cobblemmoMochila: ByteArray? = null,
+        rctProgreso: ByteArray? = null
     ) {
         if (CobblemonGuard.config.identifyByName) {
-            saveByName(uuid, playerName, inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila)
+            saveByName(uuid, playerName, inventory, enderChest, cobblemonPc, cobblemonParty, trinkets, backpacks, economy, ftbQuests, cobblemonPokedex, cobblemmoMochila, rctProgreso)
             logSync(uuid, playerName, "SAVE", true, null)
             return
         }
         db.getConnection().use { conn ->
             conn.prepareStatement("""
                 INSERT INTO cobblemonguard_players
-                    (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 -- VALUES(col) y no el alias de fila (INSERT ... AS n) que MySQL 8.0.20
                 -- recomienda: ese alias NO existe en MariaDB, y este mod se instala tanto en
                 -- una como en la otra. VALUES() esta deprecado pero funciona en las dos; el
@@ -74,6 +73,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     ftb_quests      = COALESCE(VALUES(ftb_quests),      ftb_quests),
                     cobblemon_pokedex = COALESCE(VALUES(cobblemon_pokedex), cobblemon_pokedex),
                     cobblemmo_mochila = COALESCE(VALUES(cobblemmo_mochila), cobblemmo_mochila),
+                    rct_progreso    = COALESCE(VALUES(rct_progreso),    rct_progreso),
                     last_save       = CURRENT_TIMESTAMP
             """.trimIndent()).use { stmt ->
                 stmt.setString(1, uuid.toString())
@@ -88,6 +88,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                 stmt.setBytes(10, ftbQuests)
                 stmt.setBytes(11, cobblemonPokedex)
                 stmt.setBytes(12, cobblemmoMochila)
+                stmt.setBytes(13, rctProgreso)
                 stmt.executeUpdate()
             }
         }
@@ -102,7 +103,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         uuid: UUID, playerName: String,
         inventory: ByteArray?, enderChest: ByteArray?, cobblemonPc: ByteArray?,
         cobblemonParty: ByteArray?, trinkets: ByteArray?, backpacks: ByteArray?, economy: ByteArray?,
-        ftbQuests: ByteArray?, cobblemonPokedex: ByteArray?, cobblemmoMochila: ByteArray?
+        ftbQuests: ByteArray?, cobblemonPokedex: ByteArray?, cobblemmoMochila: ByteArray?, rctProgreso: ByteArray?
     ) {
         db.getConnection().use { conn ->
             val updated = conn.prepareStatement("""
@@ -117,6 +118,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     ftb_quests      = COALESCE(?, ftb_quests),
                     cobblemon_pokedex = COALESCE(?, cobblemon_pokedex),
                     cobblemmo_mochila = COALESCE(?, cobblemmo_mochila),
+                    rct_progreso    = COALESCE(?, rct_progreso),
                     last_save       = CURRENT_TIMESTAMP
                 WHERE player_name = ?
             """.trimIndent()).use { stmt ->
@@ -130,14 +132,15 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                 stmt.setBytes(8, ftbQuests)
                 stmt.setBytes(9, cobblemonPokedex)
                 stmt.setBytes(10, cobblemmoMochila)
-                stmt.setString(11, playerName)
+                stmt.setBytes(11, rctProgreso)
+                stmt.setString(12, playerName)
                 stmt.executeUpdate()
             }
             if (updated == 0) {
                 conn.prepareStatement("""
                     INSERT INTO cobblemonguard_players
-                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent()).use { stmt ->
                     stmt.setString(1, uuid.toString())
                     stmt.setString(2, playerName)
@@ -151,15 +154,14 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                     stmt.setBytes(10, ftbQuests)
                     stmt.setBytes(11, cobblemonPokedex)
                     stmt.setBytes(12, cobblemmoMochila)
+                    stmt.setBytes(13, rctProgreso)
                     stmt.executeUpdate()
                 }
             }
         }
     }
 
-    // ──────────────────────────────────────────────
     // Cargar datos de un jugador
-    // ──────────────────────────────────────────────
 
     data class PlayerData(
         val inventory: ByteArray?,
@@ -171,7 +173,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         val economy: ByteArray? = null,
         val ftbQuests: ByteArray? = null,
         val cobblemonPokedex: ByteArray? = null,
-        val cobblemmoMochila: ByteArray? = null
+        val cobblemmoMochila: ByteArray? = null,
+        val rctProgreso: ByteArray? = null
     )
 
     fun loadPlayerData(uuid: UUID, playerName: String): PlayerData? {
@@ -197,7 +200,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
     private fun queryPlayerData(where: String, param: String): PlayerData? {
         db.getConnection().use { conn ->
             conn.prepareStatement("""
-                SELECT inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
+                SELECT inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso
                 FROM cobblemonguard_players
                 WHERE $where
             """.trimIndent()).use { stmt ->
@@ -214,7 +217,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
                         economy        = rs.getBytes("economy"),
                         ftbQuests      = rs.getBytes("ftb_quests"),
                         cobblemonPokedex = rs.getBytes("cobblemon_pokedex"),
-                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila")
+                        cobblemmoMochila = rs.getBytes("cobblemmo_mochila"),
+                        rctProgreso    = rs.getBytes("rct_progreso")
                     )
                 }
             }
@@ -243,9 +247,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         }
     }
 
-    // ──────────────────────────────────────────────
     // Info del jugador (para /cobblemonguard info)
-    // ──────────────────────────────────────────────
 
     data class PlayerInfo(val uuid: UUID, val playerName: String, val lastSave: String)
 
@@ -255,7 +257,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
 
         queryPlayerInfo(uuid, "uuid = ?", uuid.toString())?.let { return it }
         if (!CobblemonGuard.config.identifyByNameFallbackEffective) return null
-        // Solo lectura — no reclama la fila (eso ya lo hace loadPlayerData en el join).
+        // Solo lectura: no reclama la fila (eso ya lo hace loadPlayerData en el join).
         return queryPlayerInfo(uuid, "player_name = ? ORDER BY last_save DESC LIMIT 1", playerName)
     }
 
@@ -279,7 +281,7 @@ class PlayerDataRepository(private val db: DatabaseManager) {
     }
 
     /**
-     * Lee SOLO el blob de PC de un jugador por UUID exacto — sin el fallback por nombre
+     * Lee SOLO el blob de PC de un jugador por UUID exacto, sin el fallback por nombre
      * de [loadPlayerData] (no hace falta: quien llama ya tiene el UUID real) y sin
      * reclamar ninguna fila. Usado por [com.cobblemonguard.sync.LivePastureSync] para
      * refrescar en segundo plano la PC de un jugador offline en este backend cuando una
@@ -323,8 +325,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
             try {
                 val copiadas = conn.prepareStatement("""
                     INSERT INTO cobblemonguard_backups
-                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila)
-                    SELECT uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila
+                        (uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso)
+                    SELECT uuid, player_name, inventory, ender_chest, cobblemon_pc, cobblemon_party, trinkets, backpacks, economy, ftb_quests, cobblemon_pokedex, cobblemmo_mochila, rct_progreso
                     FROM cobblemonguard_players WHERE uuid = ?
                 """.trimIndent()).use { stmt ->
                     stmt.setString(1, uuid.toString())
@@ -377,18 +379,15 @@ class PlayerDataRepository(private val db: DatabaseManager) {
         }
     }
 
-    // ──────────────────────────────────────────────
     // Log de sincronizaciones
-    // ──────────────────────────────────────────────
 
     /**
      * Registra una operación en `cobblemonguard_sync_log`.
      *
-     * Por defecto (`syncLogOnlyErrors`) solo se escriben los FALLOS. Antes se escribía una
-     * fila por cada SAVE y cada LOAD de cada jugador — con auto-save activo son millones de
-     * filas al año en una tabla que nunca se limpiaba, y además cada fila toma su PROPIA
-     * conexión del pool, así que cada guardado costaba el doble de tráfico a MySQL para
-     * registrar un "salió bien" que casi nunca se consulta.
+     * Por defecto (`syncLogOnlyErrors`) solo se escriben los FALLOS. Una fila por cada SAVE y
+     * cada LOAD de cada jugador son millones de filas al año con auto-save activo, y además
+     * cada fila toma su PROPIA conexión del pool: cada guardado costaría el doble de tráfico
+     * a MySQL para registrar un "salió bien" que casi nunca se consulta.
      */
     fun logSync(uuid: UUID, playerName: String, action: String, success: Boolean, errorMsg: String?) {
         if (success && CobblemonGuard.config.syncLogOnlyErrorsEffective) return
@@ -414,8 +413,8 @@ class PlayerDataRepository(private val db: DatabaseManager) {
     /**
      * Borra entradas del log más viejas que [retentionHours] (0 = no borrar nada).
      *
-     * Esta tabla no se limpiaba NUNCA — el único DELETE existía como comentario en
-     * `sql/setup.sql` para ejecutar a mano. Se borra en lotes por el mismo motivo que los
+     * `sql/setup.sql` solo trae el DELETE como comentario para ejecutar a mano; esto lo hace
+     * solo. Se borra en lotes por el mismo motivo que los
      * backups (ver [BackupRepository.cleanOldBackups]).
      */
     fun cleanOldSyncLog(retentionHours: Int) {
@@ -446,5 +445,5 @@ class PlayerDataRepository(private val db: DatabaseManager) {
 
 /** Columnas de datos de jugador que `respaldarYReemplazar` acepta. Lista blanca: se interpolan en SQL. */
 private val COLUMNAS_DE_DATOS = setOf(
-    "inventory", "ender_chest", "cobblemon_pc", "cobblemon_party", "trinkets", "backpacks", "economy", "ftb_quests", "cobblemon_pokedex", "cobblemmo_mochila"
+    "inventory", "ender_chest", "cobblemon_pc", "cobblemon_party", "trinkets", "backpacks", "economy", "ftb_quests", "cobblemon_pokedex", "cobblemmo_mochila", "rct_progreso"
 )

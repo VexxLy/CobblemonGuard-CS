@@ -29,7 +29,7 @@ import java.util.UUID
  *   PokemonStore.sendTo(class_3222)
  *
  * NOTA DE RENDIMIENTO: los métodos de aquí abajo se resuelven vía [ReflectCache] en
- * vez de escanear `Class.methods` en cada llamada — varios de estos (getAtInt,
+ * vez de escanear `Class.methods` en cada llamada: varios de estos (getAtInt,
  * setAtInt, pokemonUuid, pcSetAt...) corren una vez POR SLOT de PC/party (hasta
  * cientos por restore) en el hilo del servidor durante cada join. Sin cachear, con
  * muchos jugadores conectándose cerca en el tiempo eso se nota como TPS drops.
@@ -54,7 +54,7 @@ object CobblemonStorage {
         runCatching { Class.forName("com.cobblemon.mod.common.api.storage.pc.PCPosition") }.getOrNull()
     }
 
-    // Constructores de stores desasociados / posiciones de PC — resueltos una sola vez.
+    // Constructores de stores desasociados / posiciones de PC: resueltos una sola vez.
     private val partyStoreCtor by lazy {
         playerPartyStoreClass?.let { ReflectCache.constructor(it, UUID::class.java) }
     }
@@ -62,9 +62,9 @@ object CobblemonStorage {
         pcStoreClass?.let { ReflectCache.constructor(it, UUID::class.java) }
     }
     private val pcPositionCtor by lazy {
-        // java.lang.Integer.TYPE y no Int::class.javaPrimitiveType: este ultimo es Class<Int>?
+        // java.lang.Integer.TYPE y no Int::class.javaPrimitiveType: este último es Class<Int>?
         // (nullable por firma, aunque para Int nunca sea null) y ReflectCache.constructor pide
-        // Class<*> no nulo, asi que Kotlin lo rechaza.
+        // Class<*> no nulo, así que Kotlin lo rechaza.
         pcPositionClass?.let { ReflectCache.constructor(it, java.lang.Integer.TYPE, java.lang.Integer.TYPE) }
     }
 
@@ -76,10 +76,10 @@ object CobblemonStorage {
         }
     }
 
-    // ── Acceso al gestor de almacenamiento ─────────────────────────────────
+    // Acceso al gestor de almacenamiento
 
     // La instancia (Cobblemon.INSTANCE) y su storage manager son SIEMPRE el mismo
-    // singleton durante toda la vida del server — se resuelven una sola vez.
+    // singleton durante toda la vida del server: se resuelven una sola vez.
     private val cobblemonInstance by lazy {
         runCatching { cobblemonClass?.getField("INSTANCE")?.get(null) }.getOrNull()
     }
@@ -101,9 +101,9 @@ object CobblemonStorage {
     fun getPC(player: ServerPlayerEntity): Any? = getStore("getPC", player)
 
     /**
-     * getPC(uuid, registryAccess) — la SOBRECARGA por UUID que usan internamente las
+     * getPC(uuid, registryAccess): la SOBRECARGA por UUID que usan internamente las
      * pasturas (`PokemonPastureBlockEntity`) para leer la PC del dueño sin que esté
-     * online. Distinta de [getPC] (que toma un [ServerPlayerEntity]) — se resuelve por
+     * online. Distinta de [getPC] (que toma un [ServerPlayerEntity]): se resuelve por
      * separado porque tienen distinta cantidad/tipo de parámetros. Usada por
      * [LivePastureSync] para refrescar el store en vivo de un jugador offline en este
      * backend.
@@ -129,10 +129,10 @@ object CobblemonStorage {
      *     completo ni mantenerlo si Cobblemon la mueve de paquete).
      *   - El valor de prioridad se saca de los `enumConstants` del PRIMER parámetro,
      *     prefiriendo uno cuyo nombre contenga "HIGH" (para quedar ANTES que la factory
-     *     default en la iteración — el manager se queda con el primer resultado no-nulo,
+     *     default en la iteración: el manager se queda con el primer resultado no-nulo,
      *     así que si quedáramos después nunca se nos llamaría) y si no hay ninguno así,
      *     el primer valor del enum. Esto es una heurística (el enum real de prioridad no
-     *     se pudo confirmar sin compilar contra Cobblemon) — si resulta ser la prioridad
+     *     se pudo confirmar sin compilar contra Cobblemon): si resulta ser la prioridad
      *     equivocada, el único efecto es que [LivePastureSync] queda inerte (nunca se
      *     invoca), NUNCA rompe nada: revisa el log de arranque por
      *     "[Pasturas] Factory registrada..." para confirmar que se enganchó.
@@ -182,7 +182,7 @@ object CobblemonStorage {
         }.getOrNull()
     }
 
-    // ── Serializar / deserializar un store completo ────────────────────────
+    // Serializar / deserializar un store completo
 
     /** Serializa un store (party o PC) a un NbtCompound usando saveToNBT. */
     fun saveStore(store: Any, registries: Any): NbtCompound? {
@@ -258,7 +258,7 @@ object CobblemonStorage {
         }
     }
 
-    // ── Stores TEMPORALES + copia al store en vivo ─────────────────────────
+    // Stores TEMPORALES + copia al store en vivo
     //
     // loadFromNBT sobre el store EN VIVO puebla los datos pero NO notifica al
     // cliente (Cobblemon solo lo usa en stores recién creados). Por eso cargamos
@@ -276,7 +276,7 @@ object CobblemonStorage {
     /**
      * Copia el equipo (6 slots) del store temporal al store en vivo, tocando SOLO
      * lo que cambió. Si el slot ya tiene el MISMO Pokémon (mismo UUID) se deja
-     * intacto — así evitamos crear objetos Pokémon duplicados que causan fantasmas.
+     * intacto: así evitamos crear objetos Pokémon duplicados que causan fantasmas.
      */
     fun copyPartyToLive(detached: Any, live: Any): Boolean {
         val size = intMethod(live, "size") ?: 6
@@ -313,14 +313,14 @@ object CobblemonStorage {
         return changed
     }
 
-    // ── Mezcla estricta, con sincronización de CONTENIDO ──────────────────
+    // Mezcla estricta, con sincronización de CONTENIDO
     //
     // copyPartyToLive / copyPCToLive (arriba) comparan solo por UUID: si el slot ya tiene el
     // mismo Pokémon, no lo tocan. En una red eso es un agujero grande. El Pokémon vivo en este
     // backend es la copia de SU disco local, que puede tener días: si en otro backend el
     // jugador lo subió de nivel, le cambió los movimientos o le sacó el objeto equipado, acá no
     // se aplicaba nada. Peor: el objeto que le sacó estaba ahora en su inventario (que sí viaja
-    // por MySQL) Y seguía equipado en la copia vieja de este backend — un duplicado sin ningún
+    // por MySQL) Y seguía equipado en la copia vieja de este backend: un duplicado sin ningún
     // truco. Y al salir, este backend escribía la copia vieja encima del progreso del otro.
     //
     // Estas versiones comparan también el contenido (el NBT completo de cada uno), y si difiere:
@@ -330,8 +330,8 @@ object CobblemonStorage {
     //   copia varios campos persistidos (rideBoosts, rideStamina, currentFullness,
     //   interactionCooldowns, isAlpha, heldItemVisible, originalTrainerFriendship) y además pisa
     //   potentialMarks con las marks del otro, que es un bug suyo.
-    // - Si hay algo VIVO apuntando a ese objeto —está en el hombro, o en una pastura (tiene
-    //   tetheringId: la entidad de la pastura guarda una referencia a este mismo objeto)—
+    // - Si hay algo VIVO apuntando a ese objeto (está en el hombro, o en una pastura (tiene
+    //   tetheringId: la entidad de la pastura guarda una referencia a este mismo objeto))
     //   reemplazarlo dejaría a esa referencia colgando de un objeto que ya no está en el store:
     //   los "fantasmas" que motivaron comparar solo por UUID. Ahí se copian los datos SOBRE el
     //   mismo objeto con copyFrom, se le devuelve su estado (copyFrom lo pisa) y se corrige
@@ -376,7 +376,7 @@ object CobblemonStorage {
         val a = nbtDe(vivo, registries) ?: error("no se pudo serializar el Pokémon en vivo para compararlo")
         val b = nbtDe(nuevo, registries) ?: error("no se pudo serializar el Pokémon de la BD para compararlo")
         if (a == b) return Accion.NADA
-        val leerEstado = getStateMethod ?: error("Pokemon.getState no existe en esta versión de Cobblemon")
+        val leerEstado = getStateMethod ?: error("Pokémon.getState no existe en esta versión de Cobblemon")
         val estado = leerEstado.invoke(vivo)?.javaClass?.simpleName
         // Al entrar no puede haber Pokémon afuera salvo que el jugador lo haya sacado durante la
         // carga, y un /cg restore o un rollback sí pueden encontrarse uno peleando. Tocarle los datos
@@ -388,9 +388,9 @@ object CobblemonStorage {
 
     /** Copia los datos de [nuevo] sobre [vivo] sin reemplazar el objeto. Ver el bloque de arriba. */
     private fun copiarEnLugar(vivo: Any, nuevo: Any) {
-        val copiar = copyFromMethod ?: error("Pokemon.copyFrom no existe en esta versión de Cobblemon")
-        val leerEstado = getStateMethod ?: error("Pokemon.getState no existe en esta versión de Cobblemon")
-        val fijarEstado = setStateMethod ?: error("Pokemon.setState no existe en esta versión de Cobblemon")
+        val copiar = copyFromMethod ?: error("Pokémon.copyFrom no existe en esta versión de Cobblemon")
+        val leerEstado = getStateMethod ?: error("Pokémon.getState no existe en esta versión de Cobblemon")
+        val fijarEstado = setStateMethod ?: error("Pokémon.setState no existe en esta versión de Cobblemon")
         val estado = leerEstado.invoke(vivo)
         copiar.invoke(vivo, nuevo)
         if (estado != null) fijarEstado.invoke(vivo, estado)
@@ -412,8 +412,8 @@ object CobblemonStorage {
     /**
      * @param esperaPokemon true si se sabe que el snapshot TIENE Pokémon (el llamador ya lo
      *   comprobó). Si aun así no se lee ninguno del store temporal, es que leer slots dejó de
-     *   funcionar —y como el mismo método lee el store vivo, los dos "parecen vacíos" y la mezcla
-     *   no haría nada sin avisar—.
+     *   funcionar (y como el mismo método lee el store vivo, los dos "parecen vacíos" y la mezcla
+     *   no haría nada sin avisar).
      */
     fun mezclarParty(detached: Any, live: Any, registries: Any, esperaPokemon: Boolean): Int {
         val size = intMethod(live, "size") ?: error("no se pudo leer el tamaño del equipo")
@@ -458,7 +458,7 @@ object CobblemonStorage {
             for (s in 0 until SLOTS_PER_BOX) {
                 if (getAtInt(caja, s) != null) {
                     error("la PC guardada tiene Pokémon en la caja ${b + 1}, pero este backend tiene ${liveBoxes.size} " +
-                        "cajas. Los backends tienen distinta cantidad de cajas de PC en la config de Cobblemon: igualala")
+                        "cajas. Los backends tienen distinta cantidad de cajas de PC en la config de Cobblemon: iguálala")
                 }
             }
         }
@@ -523,9 +523,9 @@ object CobblemonStorage {
         method?.invoke(target, i)
     }.getOrNull()
 
-    // Los tres devuelven si de verdad hicieron algo. Antes devolvían Unit y se tragaban todo:
-    // si Cobblemon renombraba "set" o "remove", el ?. salteaba la llamada en silencio y la
-    // mezcla informaba que había aplicado la PC sin haber tocado nada.
+    // Los tres devuelven si de verdad hicieron algo. Con Unit, si Cobblemon renombra "set" o
+    // "remove", el ?. saltea la llamada en silencio y la mezcla informaría que aplicó la PC
+    // sin haber tocado nada.
 
     private fun setAtInt(target: Any, i: Int, pokemon: Any): Boolean = runCatching {
         val method = ReflectCache.method(target.javaClass, "set", 2) {
@@ -558,11 +558,40 @@ object CobblemonStorage {
     }.getOrNull()
 
     /**
+     * Etiqueta que GUARD agrega al NBT del equipo y de la PC al guardarlos. Cobblemon no la lee
+     * (el snapshot se carga primero en un store temporal), y sirve para distinguir un vacío real,
+     * el de un jugador que dejó el equipo o la PC sin Pokémon, de un snapshot vacío de datos
+     * viejos o migrados, que no lleva la marca.
+     */
+    const val MARCA_GUARDADO = "cgGuardado"
+
+    /** Agrega [MARCA_GUARDADO] al NBT que se va a escribir en MySQL. */
+    fun marcarGuardado(nbt: NbtCompound) {
+        nbt.putBoolean(MARCA_GUARDADO, true)
+    }
+
+    /**
+     * ¿El blob lo escribió GUARD con la marca? Solo se usa cuando el snapshot viene sin Pokémon,
+     * para decidir si ese vacío se aplica. Ante cualquier error de lectura devuelve false: en la
+     * duda se conserva lo que el jugador tiene en este backend, igual que antes.
+     */
+    fun blobVacioConfirmado(data: ByteArray): Boolean {
+        return runCatching {
+            val nbt = net.minecraft.nbt.NbtIo.readCompressed(
+                java.io.ByteArrayInputStream(data),
+                net.minecraft.nbt.NbtSizeTracker.of(100L * 1024 * 1024)
+            )
+            nbt.getBoolean(MARCA_GUARDADO)
+        }.getOrDefault(false)
+    }
+
+    /**
      * Heurística barata: ¿el blob (NBT gzip de un store) contiene al menos un Pokémon?
      *
      * El NBT de cada Pokémon de Cobblemon incluye la etiqueta "Species". Si no aparece,
-     * el store guardado está VACÍO. Se usa para NO pisar un PC/party con pokémon vivos
-     * cuando la BD tiene un snapshot vacío (típico de datos migrados de la versión vieja).
+     * el store guardado está VACÍO. Un vacío sin [MARCA_GUARDADO] (típico de datos migrados
+     * de la versión vieja) no pisa un PC/party con Pokémon vivos; uno con la marca sí se
+     * aplica fuera del modo single-server (ver [blobVacioConfirmado]).
      *
      * Ante cualquier error de lectura devuelve true (no bloquear el flujo normal).
      */

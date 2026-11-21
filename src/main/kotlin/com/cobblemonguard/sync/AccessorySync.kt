@@ -13,23 +13,21 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
 /**
- * Sincroniza los slots de accesorios equipados — donde viven las MOCHILAS de
+ * Sincroniza los slots de accesorios equipados: donde viven las MOCHILAS de
  * Sophisticated Backpacks cuando el jugador las lleva puestas.
  *
  * El servidor COBBLEVERSE usa el mod **Accessories** (io.wispforest.accessories)
  * como proveedor de slots (con un compat layer para mods basados en Trinkets).
  *
- * ── POR QUÉ EL CÓDIGO ANTERIOR (TrinketsSync) NO FUNCIONABA ──────────────────
- * Llamaba por reflexión a métodos de Minecraft (getStack/setStack/size/encode…)
- * usando sus nombres Yarn. En un servidor de producción esos métodos tienen
- * nombres "intermediary" (method_5438, method_5447…), así que la reflexión por
- * nombre Yarn lanzaba NoSuchMethodException y NADA se guardaba.
+ * Por qué no se llama por reflexión a los métodos de Minecraft (getStack/setStack/size/
+ * encode…) con sus nombres Yarn: en un servidor de producción esos métodos tienen
+ * nombres "intermediary" (method_5438, method_5447…), así que la reflexión por nombre
+ * Yarn lanza NoSuchMethodException y NADA se guarda.
  *
- * ── TÉCNICA CORRECTA ─────────────────────────────────────────────────────────
- * Usamos reflexión SOLO para cruzar la frontera de Accessories (cuyos nombres NO
+ * Cómo se hace: usamos reflexión SOLO para cruzar la frontera de Accessories (cuyos nombres NO
  * se ofuscan). El objeto devuelto por getAccessories() es un SimpleInventory
  * (class_1277) de Minecraft, así que lo casteamos a la interfaz de Minecraft y
- * llamamos toNbtList/readNbtList NORMALMENTE — Loom las remapea a los nombres
+ * llamamos toNbtList/readNbtList NORMALMENTE. Loom las remapea a los nombres
  * intermediary correctos en producción.
  *
  * Nota sobre contenidos: SB guarda el CONTENIDO de la mochila en un almacenamiento
@@ -51,7 +49,7 @@ object AccessorySync {
         }
     }
 
-    // ── Serializar ─────────────────────────────────────────────────────────
+    // Serializar
 
     fun serialize(player: ServerPlayerEntity): ByteArray? {
         if (!isLoaded) return null
@@ -86,13 +84,13 @@ object AccessorySync {
         }.getOrNull()
     }
 
-    // ── Deserializar ───────────────────────────────────────────────────────
+    // Deserializar
 
     fun deserialize(player: ServerPlayerEntity, data: ByteArray): Resultado {
         if (!isLoaded) return Resultado.OMITIDO
         return runCatching {
-            // Accessories SI esta cargado (chequeado arriba): no obtener la capability o los
-            // contenedores del jugador es la reflexion rota, y sus accesorios quedan los locales.
+            // Accessories SI está cargado (chequeado arriba): no obtener la capability o los
+            // contenedores del jugador es la reflexión rota, y sus accesorios quedan los locales.
             val capability = getCapability(player) ?: run {
                 CobblemonGuard.logger.error("[Accesorios] No se pudo obtener la capability de ${player.name.string}.")
                 return Resultado.FALLO
@@ -161,9 +159,9 @@ object AccessorySync {
         }.getOrElse { emptyList() }
     }
 
-    // ── Reflexión de Accessories ───────────────────────────────────────────
+    // Reflexión de Accessories
 
-    /** AccessoriesCapability.get(LivingEntity) — estático, puede devolver null. */
+    /** AccessoriesCapability.get(LivingEntity): estático, puede devolver null. */
     private val getCapabilityMethod by lazy {
         runCatching { capabilityClass?.getMethod("get", LivingEntity::class.java) }.getOrNull()
     }

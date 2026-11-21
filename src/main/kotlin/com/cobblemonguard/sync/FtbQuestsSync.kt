@@ -19,7 +19,7 @@ import java.util.UUID
  * el lock entre servidores. Así una recompensa reclamada en un backend figura como
  * reclamada en el otro y no se puede cobrar dos veces.
  *
- * ── API real verificada con javap (FTB Quests 2101.1.36, FTB Teams 2101.1.11) ──────────
+ * API real verificada con javap (FTB Quests 2101.1.36, FTB Teams 2101.1.11):
  *   ServerQuestFile.INSTANCE                         campo estático público
  *   BaseQuestFile.getTeamData(PlayerEntity)          → Optional<TeamData> (equipo ACTUAL)
  *   TeamData.getTeamId()                             → UUID
@@ -37,7 +37,7 @@ import java.util.UUID
  * Reflexión SOLO para cruzar la frontera de FTB (sus nombres no se ofuscan); los tipos de
  * Minecraft (NbtCompound, ServerPlayerEntity) se usan directo, como en AccessorySync.
  *
- * ── Grupos (/ftbteams party) ───────────────────────────────────────────────────────────
+ * Grupos (/ftbteams party):
  * Si el jugador está en un grupo, FTB usa el progreso del GRUPO, que es compartido entre
  * varios jugadores que pueden estar en backends distintos a la vez. Eso no se puede
  * proteger con un lock por jugador, así que NO se sincroniza: serialize devuelve null (la
@@ -63,7 +63,7 @@ object FtbQuestsSync {
     /** Grupos ya avisados, para no llenar el log en cada auto-save. */
     private val avisadosGrupo = java.util.concurrent.ConcurrentHashMap.newKeySet<UUID>()
 
-    // ── Serializar ─────────────────────────────────────────────────────────
+    // Serializar
 
     fun serialize(player: ServerPlayerEntity): ByteArray? {
         if (!isLoaded) return null
@@ -89,7 +89,7 @@ object FtbQuestsSync {
         }.getOrNull()
     }
 
-    // ── Aplicar ────────────────────────────────────────────────────────────
+    // Aplicar
 
     fun deserialize(player: ServerPlayerEntity, data: ByteArray): Resultado {
         if (!isLoaded) return Resultado.OMITIDO
@@ -145,7 +145,7 @@ object FtbQuestsSync {
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────
+    // Helpers
 
     /** TeamData del equipo ACTUAL del jugador (personal o grupo), o null. */
     private fun equipoActual(player: ServerPlayerEntity): Any? {

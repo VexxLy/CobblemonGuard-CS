@@ -62,9 +62,7 @@ object GuardApi {
     @JvmStatic
     fun apiVersion(): Int = API_VERSION
 
-    // ══════════════════════════════════════════════════════
     // Base de datos
-    // ══════════════════════════════════════════════════════
 
     /**
      * true si el pool de MySQL está conectado y puede prestar conexiones. Conviene
@@ -103,9 +101,7 @@ object GuardApi {
         CobblemonGuard.configOrNull()?.crossServerSyncEnabled == true
     }.getOrDefault(false)
 
-    // ══════════════════════════════════════════════════════
     // Ciclo de vida de los datos del jugador
-    // ══════════════════════════════════════════════════════
 
     /**
      * Se dispara (en el hilo del servidor) cuando GUARD terminó de aplicarle al jugador sus
@@ -140,7 +136,7 @@ object GuardApi {
     fun isPlayerDataLoaded(uuid: UUID): Boolean =
         com.cobblemonguard.events.PlayerEventHandler.isDataLoaded(uuid)
 
-    // ── Uso interno de GUARD ──────────────────────────────────────────────
+    // Uso interno de GUARD
 
     /** Interno de GUARD. Puede llamarse desde cualquier hilo; despacha en el del servidor. */
     @JvmStatic
@@ -148,7 +144,7 @@ object GuardApi {
         dispatch(loadedListeners, player, "cargado", omitirSiSalio = true)
 
     /**
-     * Interno de GUARD. Se dispara durante la DESCONEXION, donde el jugador puede estar ya
+     * Interno de GUARD. Se dispara durante la DESCONEXIÓN, donde el jugador puede estar ya
      * marcado como removido de la entidad-lista; por eso acá NO se omite por `isRemoved`
      * (si se omitiera, el evento no llegaría nunca y los otros mods perderían su última
      * chance de volcar datos).

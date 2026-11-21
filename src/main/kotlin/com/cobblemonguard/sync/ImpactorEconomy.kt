@@ -8,35 +8,34 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
- * Acceso a la economía de Impactor vía REFLEXIÓN — mismo criterio que [CobblemonStorage]:
+ * Acceso a la economía de Impactor vía REFLEXIÓN: mismo criterio que [CobblemonStorage]:
  * el mod sigue funcionando sin Impactor instalado, y no queda atado a una versión exacta
  * del jar (Impactor no publica en un maven con coordenadas estables).
  *
- * API real (VERIFICADA, no adivinada — confirmada con `javap` sobre el jar real de
- * Impactor en el proyecto hermano `cobblemmo-server`, ver
+ * API verificada con `javap` sobre el jar de Impactor en el proyecto hermano
+ * `cobblemmo-server` (ver
  * `net/cobblemmo/pokepad/gts/ImpactorGtsEconomy.java` y
  * `net/cobblemmo/economy/ArceusCoinEconomy.java`):
  *
- *   EconomyService.instance(): EconomyService                    — estático
- *   EconomyService.currencies(): <registry>                      — confirmado, se usa tal cual
- *   <registry>.currency(Key): Optional<Currency>                 — confirmado
- *   <registry>.registered(): Collection<?>                       — confirmado por nombre (comentario de ArceusCoin.java)
- *   EconomyService.account(Currency, UUID): CompletableFuture<Account>  — confirmado (`.join()` en el código real)
- *   Account.balance(): BigDecimal                                — confirmado
- *   Account.withdraw(BigDecimal): EconomyTransaction              — confirmado
- *   Account.deposit(BigDecimal): EconomyTransaction               — confirmado
- *   EconomyTransaction.successful(): Boolean                      — confirmado
+ *   EconomyService.instance(): EconomyService                    estático
+ *   EconomyService.currencies(): <registry>                      confirmado, se usa tal cual
+ *   <registry>.currency(Key): Optional<Currency>                 confirmado
+ *   <registry>.registered(): Collection<?>                       confirmado por nombre (comentario de ArceusCoin.java)
+ *   EconomyService.account(Currency, UUID): CompletableFuture<Account>  confirmado (`.join()` en el código real)
+ *   Account.balance(): BigDecimal                                confirmado
+ *   Account.withdraw(BigDecimal): EconomyTransaction              confirmado
+ *   Account.deposit(BigDecimal): EconomyTransaction               confirmado
+ *   EconomyTransaction.successful(): Boolean                      confirmado
  *
  * Lo único NO confirmado directamente es el nombre del getter de la key en `Currency`
- * (se asume `key()`, atenido a la convención sin prefijo "get" que usa el resto de la API
- * — `balance()`, `successful()`) y la forma exacta del retorno de `registered()`. Por eso
+ * (se asume `key()`, por la convención sin prefijo "get" que usa el resto de la API:
+ * `balance()`, `successful()`) y la forma exacta del retorno de `registered()`. Por eso
  * todo esto se trata como best-effort: si no se puede enumerar, [GuardConfig.economyCurrencyKeys]
  * es la vía explícita que SIEMPRE funciona (usa `currency(Key)`, 100% confirmado).
  *
- * NOTA DE RENDIMIENTO: los lookups de método pasan por [ReflectCache] — snapshotBalances
- * corre una vez por moneda por jugador en CADA guardado (quit/auto-save/backup), así que
- * sin cachear se re-escaneaba `Class.methods` repetidamente por segundo con varios
- * jugadores y varias monedas.
+ * Rendimiento: los lookups de método pasan por [ReflectCache]. snapshotBalances corre una
+ * vez por moneda por jugador en CADA guardado (quit/auto-save/backup), así que sin cachear
+ * se re-escanearía `Class.methods` varias veces por segundo con varios jugadores y monedas.
  */
 object ImpactorEconomy {
 
@@ -49,7 +48,7 @@ object ImpactorEconomy {
 
     val isLoaded: Boolean by lazy { economyServiceClass != null && keyClass != null }
 
-    // "instance()" es estático y siempre el mismo Method — se resuelve una sola vez.
+    // "instance()" es estático y siempre el mismo Method: se resuelve una sola vez.
     private val instanceMethod by lazy {
         runCatching { economyServiceClass?.getMethod("instance") }.getOrNull()
     }

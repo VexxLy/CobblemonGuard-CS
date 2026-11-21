@@ -2,24 +2,24 @@ package com.cobblemonguard.discord
 
 import com.cobblemonguard.CobblemonGuard
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.time.Instant
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Envía notificaciones al canal de Discord via Webhook.
- * Usa HttpURLConnection (sin dependencias extra — Java estándar).
+ * Envía notificaciones al canal de Discord vía Webhook.
+ * Usa HttpURLConnection (sin dependencias extra, solo Java estándar).
  *
- * ── Por qué hay una cola y no un hilo por mensaje ──────────────────────────────
- * Antes cada notificación creaba su propio `Thread`. Eso está bien para un aviso
- * suelto, pero el peor caso es justamente el incidente: si MySQL se cae con 40
- * jugadores online, `sendSyncError` se dispara una vez por guardado fallido y salían
- * 40 hilos y 40 requests HTTP casi simultáneos contra un endpoint que limita a unas
- * pocas por segundo. Resultado: 429 y notificaciones PERDIDAS, cuando más falta hacían.
+ * Por qué hay una cola y no un hilo por mensaje:
+ * Un `Thread` por notificación está bien para un aviso suelto, pero el peor caso es
+ * justamente el incidente: si MySQL se cae con 40 jugadores online, `sendSyncError` se
+ * dispara una vez por guardado fallido y saldrían 40 hilos y 40 requests HTTP casi
+ * simultáneos contra un endpoint que limita a unas pocas por segundo. Resultado: 429 y
+ * notificaciones PERDIDAS, cuando más falta hacen.
  *
- * Ahora hay un solo hilo consumidor, con espaciado entre envíos, cola acotada (si se
+ * Por eso hay un solo hilo consumidor, con espaciado entre envíos, cola acotada (si se
  * llena se descarta y se cuenta, nunca se bloquea a quien notifica) y agregación de
  * errores de sincronización: el primero sale al instante y los siguientes de la misma
  * ventana se resumen en un solo mensaje.
@@ -29,14 +29,14 @@ object DiscordWebhook {
     private val url get() = CobblemonGuard.config.discordWebhookUrl
     private val enabled get() = CobblemonGuard.config.discordEnabled && url.isNotBlank()
 
-    // ── Colores de embed ──────────────────────────────────────────────────
+    // Colores de embed
     private const val GREEN  = 0x57F287   // éxito
     private const val RED    = 0xED4245   // error
     private const val YELLOW = 0xFEE75C   // advertencia
     private const val BLUE   = 0x5865F2   // info
     private const val ORANGE = 0xE67E22   // rollback
 
-    // ── Cola de envío ─────────────────────────────────────────────────────
+    // Cola de envío
 
     private const val QUEUE_CAPACITY = 128
     private const val MIN_SPACING_MS = 250L          // ~4 mensajes/s como techo
@@ -81,7 +81,7 @@ object DiscordWebhook {
         }
     }
 
-    // ── Métodos públicos ──────────────────────────────────────────────────
+    // Métodos públicos
 
     fun sendConnectionError(error: String) {
         if (!enabled) return
@@ -247,14 +247,13 @@ object DiscordWebhook {
             color = GREEN,
             fields = listOf(
                 field("MySQL", "$host/$database"),
-                // Antes acá había un "1.0.0" hardcodeado que quedó desactualizado dos
-                // versiones. Ahora sale de los metadatos reales del mod.
+                // Sale de los metadatos del mod para no desactualizarse.
                 field("Versión", CobblemonGuard.modVersion)
             )
         ))
     }
 
-    // ── Construcción del JSON ─────────────────────────────────────────────
+    // Construcción del JSON
 
     private data class Field(val name: String, val value: String, val inline: Boolean = true)
 
@@ -283,11 +282,11 @@ object DiscordWebhook {
         """.trimIndent()
     }
 
-    // ── Envío HTTP ────────────────────────────────────────────────────────
+    // Envío HTTP
 
     private fun post(payload: String) {
         runCatching {
-            val conn = URL(url).openConnection() as HttpURLConnection
+            val conn = URI(url).toURL().openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             conn.setRequestProperty("User-Agent", "CobblemonGUARD/${CobblemonGuard.modVersion}")
@@ -315,9 +314,9 @@ object DiscordWebhook {
     /**
      * Escapa una cadena para meterla en un string JSON.
      *
-     * Antes solo cubría `\`, `"`, `\n` y `\r`. Cualquier OTRO carácter de control —un
-     * tabulador dentro de un mensaje de error de MySQL, por ejemplo— generaba un JSON
-     * inválido y Discord rechazaba el webhook entero. Ahora se escapan todos los
+     * No alcanza con `\`, `"`, `\n` y `\r`: cualquier OTRO carácter de control (un
+     * tabulador dentro de un mensaje de error de MySQL, por ejemplo) genera un JSON
+     * inválido y Discord rechaza el webhook entero. Por eso se escapan todos los
      * caracteres por debajo de 0x20 en su forma \\uXXXX.
      */
     private fun escape(s: String): String {

@@ -27,14 +27,13 @@ import java.util.UUID
 /**
  * Comandos de administración.
  *
- * ── Dos cosas importantes sobre cómo está escrito esto ─────────────────────────
+ * Dos cosas sobre cómo está escrito esto:
  *
  * 1. NINGUNA consulta a MySQL corre en el hilo del servidor. Brigadier ejecuta los
- *    comandos en el hilo principal, y antes `/cg info`, `/cg backups` y `/cg rollback`
- *    llamaban al repositorio ahí mismo. `getClosestBackup` trae todos los LONGBLOB de la
+ *    comandos en el hilo principal, y `getClosestBackup` trae todos los LONGBLOB de la
  *    fila (megabytes) y, por el respaldo por nombre, puede recorrer buena parte de la
- *    tabla de backups: un rollback podía congelar el servidor varios segundos. Ahora todo
- *    va por [PlayerEventHandler.submitDbTask] y la respuesta vuelve al hilo del servidor
+ *    tabla de backups: un `/cg rollback` ahí mismo congelaría el servidor varios segundos.
+ *    Por eso todo va por [PlayerEventHandler.submitDbTask] y la respuesta vuelve al hilo del servidor
  *    con `server.execute`.
  *
  * 2. Los permisos salen de [Permissions]: nodos `cobblemonguard.*` si hay LuckPerms, con
@@ -60,13 +59,13 @@ object GuardCommand {
                     .executes { ctx -> doStatus(ctx.source) }
                 )
 
-                // /cobblemonguard reload — recarga config/cobblemonguard.json en caliente
+                // /cobblemonguard reload: recarga config/cobblemonguard.json en caliente
                 .then(literal("reload")
                     .requires { Permissions.has(it, "reload") }
                     .executes { ctx -> doReload(ctx.source) }
                 )
 
-                // /cobblemonguard saving <start|stop>  — activa/pausa el guardado "serio"
+                // /cobblemonguard saving <start|stop>: activa o pausa el guardado "serio"
                 .then(literal("saving")
                     .requires { Permissions.has(it, "saving") }
                     .then(literal("start").executes { ctx ->
@@ -107,7 +106,7 @@ object GuardCommand {
                 )
 
                 // /cobblemonguard restore <player> [tipo]
-                //   tipo: all | inventario | ender | pc | party | accesorios | mochilas | economia
+                //   tipo: all | inventario | ender | pc | party | accesorios | mochilas | economía
                 .then(literal("restore")
                     .requires { Permissions.has(it, "restore") }
                     .then(argument("player", EntityArgumentType.player())
@@ -144,7 +143,7 @@ object GuardCommand {
                             val src = ctx.source
                             val player = EntityArgumentType.getPlayer(ctx, "player")
                             src.sendFeedback({ prefix().append(Text.literal("Creando backup de ${player.name.string}...").formatted(Formatting.YELLOW)) }, false)
-                            // Ahora se espera el resultado real en vez de cantar victoria al toque.
+                            // Se espera el resultado real antes de avisar que se creó.
                             PlayerEventHandler.saveBackupAsync(player) { inserted ->
                                 if (inserted) {
                                     src.sendFeedback({ prefix().append(Text.literal("✔ Backup de ${player.name.string} creado.").formatted(Formatting.GREEN)) }, false)
@@ -194,7 +193,7 @@ object GuardCommand {
                     )
                 )
 
-                // /cobblemonguard unlock <nombre> — libera a la fuerza un lock de Redis
+                // /cobblemonguard unlock <nombre>: libera a la fuerza un lock de Redis
                 .then(literal("unlock")
                     .requires { Permissions.has(it, "unlock") }
                     .then(argument("nombre", StringArgumentType.word())
@@ -202,7 +201,7 @@ object GuardCommand {
                     )
                 )
 
-            // /cobblemonguard restaurarfila <nombre> <tiempo> <tipo> — copia UN tipo de dato desde
+            // /cobblemonguard restaurarfila <nombre> <tiempo> <tipo>: copia UN tipo de dato desde
             // un backup directo a la fila de MySQL. Funciona con el jugador DESCONECTADO.
             root.then(literal("restaurarfila")
                 .requires { Permissions.has(it, "restaurarfila") }
@@ -220,7 +219,7 @@ object GuardCommand {
                 )
             )
 
-            // /cobblemonguard limpiar <nombre> <tipo> — respalda la fila y deja en NULL una columna.
+            // /cobblemonguard limpiar <nombre> <tipo>: respalda la fila y deja en NULL una columna.
             // Último recurso: deja entrar con lo LOCAL del backend. Ver doLimpiar.
             root.then(literal("limpiar")
                 .requires { Permissions.has(it, "limpiar") }
@@ -250,9 +249,7 @@ object GuardCommand {
         CobblemonGuard.logger.info("Comandos registrados: /cobblemonguard (/cg)")
     }
 
-    // ──────────────────────────────────────────────
     // Helpers de ejecución asíncrona
-    // ──────────────────────────────────────────────
 
     /** Corre [work] en el pool de BD y su resultado vuelve al hilo del servidor. */
     private fun <T> async(src: ServerCommandSource, work: () -> T, then: (T?) -> Unit) {
@@ -264,9 +261,7 @@ object GuardCommand {
         }
     }
 
-    // ──────────────────────────────────────────────
     // Subcomandos
-    // ──────────────────────────────────────────────
 
     private fun doStatus(src: ServerCommandSource): Int {
         val cfg = CobblemonGuard.config
@@ -381,7 +376,7 @@ object GuardCommand {
     }
 
     private const val TIPOS_VALIDOS = "all, inventario, ender, pc, party, accesorios, mochilas, economia"
-    private val TIPOS_SUGERIDOS = listOf("all", "inventario", "ender", "pc", "party", "accesorios", "mochila", "sophisticated", "economia", "misiones", "pokedex")
+    private val TIPOS_SUGERIDOS = listOf("all", "inventario", "ender", "pc", "party", "accesorios", "mochila", "sophisticated", "economia", "misiones", "pokedex", "rct")
 
     /** Restaura desde los datos actuales de MySQL, solo los tipos indicados. */
     private fun doRestore(src: ServerCommandSource, player: ServerPlayerEntity, tipo: String): Int {
@@ -441,9 +436,9 @@ object GuardCommand {
             val ago = BackupRepository.formatTimestamp(backup.savedAt)
             val fallidos = SyncService.fallidos(SyncService.apply(player, backup.toBlobMap(), types))
             if (fallidos.isNotEmpty()) {
-                // El rollback no toca markLoaded, asi que un fallo aca no habilita guardados
+                // El rollback no toca markLoaded, así que un fallo acá no habilita guardados
                 // nuevos. Pero tampoco puede decir "completado": el admin cree que el jugador
-                // quedo en el estado del backup y no es asi.
+                // quedó en el estado del backup y no es así.
                 src.sendError(prefix().append(Text.literal(
                     "✘ Rollback INCOMPLETO ($etiqueta): no se pudo aplicar ${fallidos.joinToString(", ")}. Revisa la consola."
                 ).formatted(Formatting.RED)))
@@ -496,6 +491,7 @@ object GuardCommand {
         DataType.QUESTS -> "ftb_quests"
         DataType.POKEDEX -> "cobblemon_pokedex"
         DataType.MOCHILA -> "cobblemmo_mochila"
+        DataType.RCT -> "rct_progreso"
     }
 
     private fun blobDe(backup: BackupRepository.BackupEntry, tipo: DataType): ByteArray? = when (tipo) {
@@ -509,6 +505,7 @@ object GuardCommand {
         DataType.QUESTS -> backup.ftbQuests
         DataType.POKEDEX -> backup.cobblemonPokedex
         DataType.MOCHILA -> backup.cobblemmoMochila
+        DataType.RCT -> backup.rctProgreso
     }
 
     /** Un tipo solo, o null después de avisar al que escribió el comando. */
@@ -530,8 +527,8 @@ object GuardCommand {
     private data class Fila(val uuid: UUID?, val hecho: Boolean, val ocupadoPor: String? = null, val detalle: String = "")
 
     /**
-     * Si el jugador está conectado en algún backend, tocar su fila no sirve —su próximo guardado
-     * la vuelve a escribir— y además confunde: el admin ve "listo" y nada cambió. Con cross-server
+     * Si el jugador está conectado en algún backend, tocar su fila no sirve (su próximo guardado
+     * la vuelve a escribir) y además confunde: el admin ve "listo" y nada cambió. Con cross-server
      * se pregunta a Redis quién tiene su lock; sin cross-server, solo se puede mirar este servidor.
      */
     private fun ocupado(uuid: UUID, conectadoAqui: Boolean): String? {
@@ -580,7 +577,7 @@ object GuardCommand {
     /**
      * Último recurso, cuando no hay ningún backup bueno: guarda la fila como backup y deja en NULL
      * una columna. Al volver a entrar, ese tipo se saltea y el jugador se queda con lo que tenga
-     * EN LOCAL el backend donde entre — que puede ser una copia de hace semanas (recupera cosas que
+     * EN LOCAL el backend donde entre, que puede ser una copia de hace semanas (recupera cosas que
      * ya gastó: duplicado) o directamente nada si nunca estuvo en ese backend. Por eso no es la
      * primera opción.
      */

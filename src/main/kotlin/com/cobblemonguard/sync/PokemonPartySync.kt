@@ -14,8 +14,6 @@ import java.io.ByteArrayOutputStream
  * En Cobblemon la party es un almacenamiento independiente de la PC:
  *   PokemonStoreManager.getParty(player) -> PlayerPartyStore
  *
- * Antes NO se guardaba nada de la party — por eso el equipo se "perdía".
- *
  * Usa el store completo (PartyStore.saveToNBT / loadFromNBT) vía [CobblemonStorage].
  */
 object PokemonPartySync {
@@ -28,6 +26,7 @@ object PokemonPartySync {
             val party = CobblemonStorage.getParty(player) ?: return null
             val registries = player.server.registryManager
             val nbt = CobblemonStorage.saveStore(party, registries) ?: return null
+            CobblemonStorage.marcarGuardado(nbt)
 
             val baos = ByteArrayOutputStream()
             NbtIo.writeCompressed(nbt, baos)
@@ -42,27 +41,31 @@ object PokemonPartySync {
      * @param onlyIfEmpty si true, NO toca el equipo si el jugador ya tiene pokémon vivos
      *   (caso ingreso normal EN SINGLE-SERVER: Cobblemon ya cargó su equipo del disco →
      *   no interferir, evita fantasmas/duplicados). En false (restore/rollback de admin,
-     *   o ingreso normal cuando `crossServerSyncEnabled=true` — ver PlayerEventHandler)
+     *   o ingreso normal cuando `crossServerSyncEnabled=true`. Ver PlayerEventHandler)
      *   SÍ se aplica MySQL, mezclando por UUID vía [CobblemonStorage.copyPartyToLive]
      *   (solo toca lo que difiere, no duplica). En redes multi-backend "ya tiene equipo"
-     *   no implica estar al día — cada backend tiene su propio disco local — por eso ahí
+     *   no implica estar al día (cada backend tiene su propio disco local) por eso ahí
      *   NO se debe pasar true.
      */
     fun deserialize(player: ServerPlayerEntity, data: ByteArray, onlyIfEmpty: Boolean = false): Resultado {
-        // Sin Cobblemon en este backend no hay nada que aplicar: es una omision, no un fallo.
+        // Sin Cobblemon en este backend no hay nada que aplicar: es una omisión, no un fallo.
         if (!CobblemonStorage.isLoaded) return Resultado.OMITIDO
         return runCatching {
             // PROTECCIÓN ANTI-CERO: si el snapshot de la BD está VACÍO, NO tocamos el
             // equipo del jugador (podría tener pokémon vivos en el guardado de Cobblemon).
-            if (!CobblemonStorage.blobHasPokemon(data)) {
+            // Un vacío que GUARD guardó con su marca es real (el jugador dejó el equipo sin Pokémon)
+            // y se aplica, salvo en single-server, donde manda el disco local. Sin la marca es un
+            // snapshot viejo o migrado y no se toca nada.
+            val conPokemon = CobblemonStorage.blobHasPokemon(data)
+            if (!conPokemon && (onlyIfEmpty || !CobblemonStorage.blobVacioConfirmado(data))) {
                 CobblemonGuard.logger.info("[Party] Snapshot de ${player.name.string} vacío en BD — se conserva su equipo actual.")
                 return Resultado.OMITIDO
             }
 
-            // Cobblemon SI esta cargado (se chequeo arriba), asi que no poder obtener el store
-            // vivo es la reflexion rota, no una omision.
+            // Cobblemon SI está cargado (se chequeo arriba), así que no poder obtener el store
+            // vivo es la reflexión rota, no una omisión.
             val live = CobblemonStorage.getParty(player) ?: run {
-                CobblemonGuard.logger.error("[Party] No se pudo obtener el equipo viva de ${player.name.string} — ¿cambio la API de Cobblemon?")
+                CobblemonGuard.logger.error("[Party] No se pudo obtener el equipo viva de ${player.name.string} — ¿cambió la API de Cobblemon?")
                 return Resultado.FALLO
             }
 
@@ -88,8 +91,11 @@ object PokemonPartySync {
             // Mezcla estricta: además de altas y bajas por UUID, actualiza el CONTENIDO de los
             // Pokémon que ya estaban (nivel, movimientos, objeto equipado). Lanza si no pudo,
             // y el getOrElse de abajo lo convierte en FALLO.
-            val cambios = CobblemonStorage.mezclarParty(detached, live, registries, esperaPokemon = true)
+            val cambios = CobblemonStorage.mezclarParty(detached, live, registries, esperaPokemon = conPokemon)
             val changed = cambios > 0
+            if (!conPokemon && changed) {
+                CobblemonGuard.logger.info("[Party] ${player.name.string} dejó el equipo vacío en otro backend: se vacía también acá.")
+            }
             if (changed) CobblemonStorage.sendPartyTo(live, player)
             CobblemonGuard.logger.debug("[Party] Restaurado equipo de ${player.name.string} (cambios=$changed).")
             Resultado.APLICADO

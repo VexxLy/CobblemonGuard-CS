@@ -2,6 +2,7 @@ package com.cobblemonguard.util
 
 import java.lang.reflect.Constructor
 import java.lang.reflect.Method
+import java.lang.reflect.Modifier
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -10,18 +11,18 @@ import java.util.concurrent.ConcurrentHashMap
  * heredados, con búsqueda lineal por nombre) en cada llamada.
  *
  * POR QUÉ IMPORTA (optimización de TPS): varios de estos lookups corren en paths
- * calientes — por jugador, por SLOT de PC/party (hasta cientos por restore), por
- * moneda de Impactor, por mochila anidada — y varios de esos paths corren en el
+ * calientes, por jugador, por SLOT de PC/party (hasta cientos por restore), por
+ * moneda de Impactor, por mochila anidada, y varios de esos paths corren en el
  * HILO DEL SERVIDOR durante joins/restores (no en el executor de BD). Sin cachear,
  * con muchos jugadores conectándose o guardando cerca en el tiempo (ej. tras un
  * reinicio del server, o el guardado masivo de backups) ese re-escaneo repetido de
  * `Class.methods` se nota como micro-lag / caídas de TPS. Cacheando el
  * Method/Constructor la PRIMERA vez, las siguientes llamadas son una invocación
- * directa — el costo normal de una llamada por reflexión, sin el escaneo previo.
+ * directa: el costo normal de una llamada por reflexión, sin el escaneo previo.
  *
  * La key incluye la clase EN TIEMPO DE EJECUCIÓN del objetivo, así que sigue
  * siendo correcto aunque la implementación concreta de un mod de terceros cambie
- * entre versiones (simplemente se cachea una entrada nueva para la clase nueva) —
+ * entre versiones (simplemente se cachea una entrada nueva para la clase nueva):
  * no hay riesgo de "quedarse pegado" a un Method de una clase vieja.
  */
 object ReflectCache {
@@ -41,17 +42,42 @@ object ReflectCache {
      */
     private fun cachear(key: String, buscar: () -> Method?): Method? {
         methods[key]?.let { return it }
-        val m = buscar() ?: return null
+        val m = buscar()?.let { invocable(it) } ?: return null
         return methods.putIfAbsent(key, m) ?: m
     }
 
     /**
-     * Como [method], pero con un filtro EXTRA sobre los tipos de parámetro — para
+     * `Class.methods` devuelve los métodos públicos de la clase REAL del objeto. Si esa clase no es
+     * pública (una clase interna privada o de paquete de otro mod, p.ej. la que implementa una
+     * interfaz de Impactor), `invoke` falla con "cannot access a member ... with modifiers public"
+     * aunque el método sea público. En ese caso se busca el mismo método en una interfaz o superclase
+     * pública (la API), que es lo que hay que llamar; si no hay, se intenta abrir el acceso.
+     */
+    private fun invocable(m: Method): Method? {
+        if (Modifier.isPublic(m.declaringClass.modifiers)) return m
+        publico(m.declaringClass, m.name, m.parameterTypes, HashSet())?.let { return it }
+        runCatching { m.trySetAccessible() }
+        return m
+    }
+
+    private fun publico(cls: Class<*>, name: String, tipos: Array<Class<*>>, vistos: MutableSet<Class<*>>): Method? {
+        if (!vistos.add(cls)) return null
+        if (Modifier.isPublic(cls.modifiers)) {
+            runCatching { cls.getMethod(name, *tipos) }.getOrNull()
+                ?.takeIf { Modifier.isPublic(it.declaringClass.modifiers) }
+                ?.let { return it }
+        }
+        for (i in cls.interfaces) publico(i, name, tipos, vistos)?.let { return it }
+        return cls.superclass?.let { publico(it, name, tipos, vistos) }
+    }
+
+    /**
+     * Como [method], pero con un filtro EXTRA sobre los tipos de parámetro: para
      * sobrecargas que solo difieren en tipo (ej. `set(int, Pokemon)` vs
      * `set(PCPosition, Pokemon)`, ambos con parameterCount=2).
      *
      * El [extraMatch] se evalúa una sola vez (al resolver y cachear), no en cada
-     * llamada — por eso debe ser un predicado puro sobre el propio [Method]
+     * llamada, por eso debe ser un predicado puro sobre el propio [Method]
      * (tipos de parámetro, anotaciones, etc.), nunca sobre el valor de los
      * argumentos de una invocación particular.
      */

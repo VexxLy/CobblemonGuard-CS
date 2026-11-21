@@ -4,7 +4,7 @@ import net.minecraft.server.network.ServerPlayerEntity
 
 /**
  * Punto único para serializar/aplicar TODOS los datos de un jugador, recorriendo
- * [SyncRegistry]. Reemplaza los bloques duplicados que antes existían en 5 sitios.
+ * [SyncRegistry], para no repetir el mismo bloque en cada lugar que guarda o carga.
  *
  * Todas las llamadas deben hacerse en el HILO DEL SERVIDOR.
  */

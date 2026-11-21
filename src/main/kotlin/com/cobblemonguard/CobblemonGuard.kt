@@ -20,8 +20,8 @@ object CobblemonGuard : ModInitializer {
 
     /**
      * Versión real del mod, leída de los metadatos de Fabric (o sea, de
-     * `gradle.properties` → `fabric.mod.json`). Antes había un "1.0.0" hardcodeado en
-     * [com.cobblemonguard.discord.DiscordWebhook] que quedó dos versiones desactualizado.
+     * `gradle.properties` → `fabric.mod.json`), para que no se desactualice como un número
+     * escrito a mano en [com.cobblemonguard.discord.DiscordWebhook].
      */
     val modVersion: String by lazy {
         runCatching {
@@ -89,7 +89,7 @@ object CobblemonGuard : ModInitializer {
             logger.info("CobblemonGUARD listo. Sincronizando con MySQL en ${config.host}:${config.port}/${config.database}")
             if (config.crossServerSyncEnabled) {
                 logger.info(
-                    "CrossServerSync ${if (CrossServerCoordinator.isConnected()) "ACTIVO" else "DEGRADADO (sin Redis)"} " +
+                    "CrossServerSync ${if (CrossServerCoordinator.isConnected()) "ACTIVO" else "DEGRADADO (sin ${if (config.lockBackendEffective == "mysql") "MySQL de locks" else "Redis"})"} " +
                     "— serverId='${config.serverId}'."
                 )
             }
@@ -109,7 +109,7 @@ object CobblemonGuard : ModInitializer {
      * Las columnas se escriben con COALESCE (un null nunca las pisa), así que mientras un
      * `syncX` está en false su columna deja de actualizarse pero NO se borra: queda congelada
      * en el estado del día que se apagó. El día que alguien la vuelve a activar, ese estado
-     * viejo se le aplica al jugador encima del que tiene ahora — y si en el medio gastó ítems
+     * viejo se le aplica al jugador encima del que tiene ahora, y si en el medio gastó ítems
      * o movió Pokémon a un sistema compartido (GTS, trade), eso se duplica.
      *
      * No se arregla solo, y no se PUEDE arreglar solo: el mod no tiene forma de distinguir

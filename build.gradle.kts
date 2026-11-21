@@ -3,9 +3,14 @@ import net.fabricmc.loom.task.RemapJarTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-    id("fabric-loom") version "1.13-SNAPSHOT"
-    id("com.github.johnrengelman.shadow") version "8.1.1"
-    kotlin("jvm") version "2.0.21"
+    // Misma versión fija que cobblemmo-server y cobblemmo-client.
+    id("fabric-loom") version "1.17.21"
+    // El plugin de johnrengelman no corre en Gradle 9. com.gradleup.shadow es el mismo
+    // proyecto con otro id; la rama 8.3.x mantiene el paquete y la API de ShadowJar.
+    id("com.gradleup.shadow") version "8.3.11"
+    // 2.1.20, igual que el Kotlin del server. La 2.0.21 marcaba sus jars con nombres
+    // viejos que Gradle 10 ya no acepta. Se queda por debajo de 2.2 a propósito (ver FLK abajo).
+    kotlin("jvm") version "2.1.20"
 }
 
 version = project.property("mod_version") as String

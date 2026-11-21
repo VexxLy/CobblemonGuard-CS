@@ -1,30 +1,30 @@
-# 🛡️ CobblemonGUARD — Guía para el Staff
+# CobblemonGUARD: guía para el staff
 
-Guía rápida para usar el mod dentro del juego. **Necesitas ser OP (nivel 2)**.
+Guía rápida para usar el mod dentro del juego. Necesitas ser OP (nivel 2).
 Todos los comandos empiezan con `/cg` (o `/cobblemonguard`, es lo mismo).
 
-> El mod guarda solo en MySQL: **inventario, cofre del Ender, PC, equipo de 6, accesorios
-> y contenido de mochilas**. No tienes que hacer nada en el día a día — guarda solo al
+> El mod guarda solo en MySQL: inventario, cofre del Ender, PC, equipo de 6, accesorios
+> y contenido de mochilas. No tienes que hacer nada en el día a día: guarda solo al
 > salir, cada rato (auto-save) y al apagar el server. Los comandos son para casos especiales.
 
 ---
 
-## ⚡ Comandos (resumen)
+## Comandos (resumen)
 
 | Comando | Para qué sirve |
 |---|---|
 | `/cg status` | Ver si la BD está conectada y si el guardado está ACTIVO |
 | `/cg info <jugador>` | Ver cuándo se guardó por última vez ese jugador |
 | `/cg save <jugador>` | Guardar YA a un jugador |
-| `/cg save all` | Guardar YA a **todos** los online |
+| `/cg save all` | Guardar YA a todos los online |
 | `/cg restore <jugador> [tipo]` | Devolverle su último guardado de la BD |
 | `/cg backup <jugador>` | Crear un backup manual de un jugador |
-| `/cg backup all` | Crear backup de **todos** los online |
+| `/cg backup all` | Crear backup de todos los online |
 | `/cg backups <jugador>` | Ver la lista de backups que tiene |
 | `/cg rollback <jugador> <tiempo> [tipo]` | Devolverlo a como estaba hace X tiempo |
 | `/cg saving start` / `stop` | Activar / pausar el guardado (ver abajo) |
 
-**`[tipo]` es opcional** (por defecto = todo). Sirve para tocar solo una parte:
+`[tipo]` es opcional (por defecto = todo). Sirve para tocar solo una parte:
 
 | tipo | qué afecta |
 |---|---|
@@ -38,7 +38,7 @@ Todos los comandos empiezan con `/cg` (o `/cobblemonguard`, es lo mismo).
 
 ---
 
-## 🎯 Tareas comunes
+## Tareas comunes
 
 ### Un jugador perdió sus cosas (bug, crasheo)
 1. `/cg backups <jugador>` → mira qué backups tiene.
@@ -68,48 +68,48 @@ Debe decir `✔ Conectado a ...` y `Guardado: ACTIVO`.
 
 ## ⏸️ Pausar el guardado (`/cg saving stop`)
 
-Esto **detiene TODAS las escrituras** a la base de datos. Úsalo solo en casos especiales
-(mantenimiento, transferencia de datos). **La carga sigue funcionando**, solo se pausa el guardado.
+Esto detiene TODAS las escrituras a la base de datos. Úsalo solo en casos especiales
+(mantenimiento, transferencia de datos). La carga sigue funcionando, solo se pausa el guardado.
 
-- `⚠️ CUIDADO:` mientras esté pausado, **si un jugador sale, NO se guarda su progreso**.
+- `⚠️ CUIDADO:` mientras esté pausado, si un jugador sale, NO se guarda su progreso.
 - Para reactivar: `/cg saving start`
 - Confírmalo con `/cg status` → `Guardado: ACTIVO`.
-- Todo esto se avisa en el **Discord** del staff (quién lo activó/pausó).
+- Todo esto se avisa en el Discord del staff (quién lo activó/pausó).
 
 > Si ves en Discord "⏸️ Guardado PAUSADO" y no fue a propósito → alguien lo pausó.
 > Reactívalo con `/cg saving start`.
 
 ---
 
-## ❌ Diferencia importante: `restore` vs `rollback`
+## Diferencia importante: `restore` vs `rollback`
 
-- **`restore`** = trae el **último guardado** que hay en la BD (uno solo, se sobreescribe).
+- `restore` = trae el último guardado que hay en la BD (uno solo, se sobreescribe).
   Si el jugador no ha guardado lo nuevo, le trae lo viejo.
-- **`rollback`** = trae un **backup histórico** de hace X tiempo (hay muchos, se guardan 1 semana).
+- `rollback` = trae un backup histórico de hace X tiempo (hay muchos, se guardan 1 semana).
 
-Regla simple: para "devolver algo perdido de hace rato" → usa **`rollback`**.
+Regla simple: para "devolver algo perdido de hace rato" → usa `rollback`.
 
 ---
 
-## 🔔 Discord
+## Discord
 Toda acción del staff se avisa automáticamente en el canal de Discord con:
-- Qué se hizo, qué jugador(es) y **quién lo ejecutó**.
+- Qué se hizo, qué jugador(es) y quién lo ejecutó.
 
 Así queda registro de todo.
 
 ---
 
-## ✅ Qué SÍ y qué NO
+## Qué SÍ y qué NO
 
-**SÍ puedes:**
+SÍ puedes:
 - Usar `restore`, `rollback`, `save`, `backup` para ayudar a jugadores.
 - Hacer `/cg save all` antes de reinicios.
 
-**NO hagas (salvo que sepas lo que haces):**
+NO hagas (salvo que sepas lo que haces):
 - `/cg saving stop` y olvidarte de reactivarlo → la gente pierde progreso.
 - `rollback` a un tiempo muy viejo "por si acaso" → le quitas lo que ganó después.
 
-**Ante la duda:** primero `/cg info <jugador>` y `/cg backups <jugador>` para ver qué hay,
+Ante la duda: primero `/cg info <jugador>` y `/cg backups <jugador>` para ver qué hay,
 y recién ahí decides.
 
 ---

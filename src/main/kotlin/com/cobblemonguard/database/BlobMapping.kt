@@ -19,7 +19,8 @@ fun PlayerDataRepository.PlayerData.toBlobMap(): Map<DataType, ByteArray?> = map
     DataType.ECONOMY     to economy,
     DataType.QUESTS      to ftbQuests,
     DataType.POKEDEX     to cobblemonPokedex,
-    DataType.MOCHILA     to cobblemmoMochila
+    DataType.MOCHILA     to cobblemmoMochila,
+    DataType.RCT         to rctProgreso
 )
 
 fun BackupRepository.BackupEntry.toBlobMap(): Map<DataType, ByteArray?> = mapOf(
@@ -32,5 +33,6 @@ fun BackupRepository.BackupEntry.toBlobMap(): Map<DataType, ByteArray?> = mapOf(
     DataType.ECONOMY     to economy,
     DataType.QUESTS      to ftbQuests,
     DataType.POKEDEX     to cobblemonPokedex,
-    DataType.MOCHILA     to cobblemmoMochila
+    DataType.MOCHILA     to cobblemmoMochila,
+    DataType.RCT         to rctProgreso
 )

@@ -19,17 +19,17 @@ import java.util.concurrent.atomic.AtomicLong
  * Coordinación cross-server para redes multi-backend (varios servidores Fabric detrás
  * de un mismo proxy Velocity, ej. Velocity-CTD + FabricProxy-Lite).
  *
- * ── El problema que resuelve ────────────────────────────────────────────────
+ * El problema que resuelve:
  * Cada backend Fabric es un proceso de Minecraft INDEPENDIENTE. Cuando el proxy mueve
  * a un jugador de un backend a otro, cada uno ve esto como un DISCONNECT (origen) y un
- * JOIN (destino) completamente separados — ninguno sabe nada del otro. Sin coordinación
+ * JOIN (destino) completamente separados: ninguno sabe nada del otro. Sin coordinación
  * externa, el backend destino podría cargar la PC/equipo del jugador (desde MySQL o
  * incluso desde su propio disco) MIENTRAS el jugador sigue técnicamente "vivo" en el
  * backend origen (guardado async todavía en curso). Eso son dos copias del mismo
- * Pokémon en memoria a la vez en dos procesos distintos — la clase exacta de bug que
+ * Pokémon en memoria a la vez en dos procesos distintos: la clase exacta de bug que
  * causa dupeos y objetos "fantasma".
  *
- * ── Cómo lo resuelve ────────────────────────────────────────────────────────
+ * Cómo lo resuelve:
  * Un lock por jugador en Redis (compartido por TODOS los backends, latencia sub-ms):
  *   - JOIN  en un backend → si el lock existe y pertenece a OTRO backend, se espera
  *            (el jugador ya está congelado por FreezeScreen) hasta que se libere o
@@ -45,9 +45,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * NO reemplaza a MySQL: es una capa fina de coordinación, no de persistencia. Si Redis
  * no está disponible, el mod se degrada a comportamiento single-server (no bloquea a
- * nadie) — nunca preferimos "trancar al jugador" sobre "dejarlo jugar sin coordinar".
+ * nadie): nunca preferimos "trancar al jugador" sobre "dejarlo jugar sin coordinar".
  *
- * Todas las llamadas de red (Jedis) deben hacerse FUERA del hilo del servidor —
+ * Todas las llamadas de red (Jedis) deben hacerse FUERA del hilo del servidor:
  * [com.cobblemonguard.events.PlayerEventHandler] ya las despacha en su executor de BD.
  */
 object CrossServerCoordinator {
@@ -66,7 +66,7 @@ object CrossServerCoordinator {
     private const val AVISO_CADA_MS = 5 * 60_000L
     private val ultimoAviso = AtomicLong(0L)
 
-    // Jugadores actualmente "reclamados" por ESTE backend — a estos se les hace heartbeat.
+    // Jugadores actualmente "reclamados" por ESTE backend: a estos se les hace heartbeat.
     private val claimedHere = ConcurrentHashMap.newKeySet<UUID>()
 
     private fun lockKey(uuid: UUID) = "cobblemonguard:lock:${uuid}"
@@ -81,6 +81,12 @@ object CrossServerCoordinator {
 
     fun isEnabled(): Boolean = cfg.crossServerSyncEnabled
 
+    /** true = locks en la MySQL de la red ([MySqlLocks]); false = Redis (lo de siempre). */
+    private val usaMysql: Boolean get() = cfg.lockBackendEffective == "mysql"
+
+    /** Nombre del backend de locks para los avisos. */
+    private val nombreBackend: String get() = if (usaMysql) "La MySQL de locks" else "Redis"
+
     @Synchronized
     fun connect() {
         if (!isEnabled()) return
@@ -88,16 +94,22 @@ object CrossServerCoordinator {
             ServerLifecycleEvents.SERVER_STARTED.register { servidor = it }
             ServerLifecycleEvents.SERVER_STOPPED.register { servidor = null }
         }
+        if (usaMysql) {
+            ultimoIntentoConexion = System.currentTimeMillis()
+            if (MySqlLocks.connect()) {
+                CobblemonGuard.logger.info("[CrossServer] Coordinación por MySQL (sin Redis) — serverId='${cfg.serverId}'.")
+            }
+            return
+        }
         // Dos hilos pueden pasar a la vez el filtro de tiempo de poolOReconectar y llegar acá
         // uno detrás del otro: el segundo no tiene que abrir otro pool encima del primero.
         if (pool != null) return
         ultimoIntentoConexion = System.currentTimeMillis()
         try {
-            // Sin PING automáticos. Antes había testOnBorrow=true (un PING antes de CADA
-            // operación) y, por defecto de JedisPoolConfig, testWhileIdle=true (un PING cada
-            // 30 s a cada conexión ociosa). Con un Redis que cobra o limita por comando
-            // (Upstash: 500 mil/mes en el plan gratis) eso duplicaba el consumo sin aportar
-            // nada. Una conexión vieja que el servidor cerró se detecta al usarla y se
+            // Sin PING automáticos: testOnBorrow=true (un PING antes de CADA operación) y
+            // testWhileIdle=true (el default de JedisPoolConfig, un PING cada 30 s a cada
+            // conexión ociosa) duplican el consumo de un Redis que cobra o limita por comando
+            // (Upstash: 500 mil/mes en el plan gratis) sin aportar nada. Una conexión vieja que el servidor cerró se detecta al usarla y se
             // reintenta una vez con otra (ver [conRedis]). El evictor sigue cerrando las
             // conexiones ociosas de más de 60 s, sin PING, así que casi nunca queda una vieja.
             val poolConfig = JedisPoolConfig().apply {
@@ -149,7 +161,15 @@ object CrossServerCoordinator {
         return p.resource.use(bloque)
     }
 
-    fun isConnected(): Boolean = pool?.isClosed == false
+    fun isConnected(): Boolean = if (usaMysql) MySqlLocks.isConnected() else pool?.isClosed == false
+
+    /** Con MySQL: si no se pudo preparar al arrancar, reintenta como mucho una vez por minuto. */
+    private fun mysqlOReconectar(): Boolean {
+        if (MySqlLocks.isConnected()) return true
+        if (System.currentTimeMillis() - ultimoIntentoConexion < RECONECTAR_CADA_MS) return false
+        connect()
+        return MySqlLocks.isConnected()
+    }
 
     /**
      * El pool, o null si no hay conexión. Si Redis no estaba disponible (al arrancar, o porque
@@ -180,7 +200,7 @@ object CrossServerCoordinator {
         else
             "no responde ($motivo)."
         CobblemonGuard.logger.error(
-            "[CrossServer] Redis $explicacion La protección entre servidores está DEGRADADA: cada jugador " +
+            "[CrossServer] $nombreBackend $explicacion La protección entre servidores está DEGRADADA: cada jugador " +
             "que entra espera ${cfg.esperaSinRedisMsEffective / 1000}s antes de cargar sus datos, para darle " +
             "tiempo al otro backend de terminar de guardarlo. Mientras dure, un cambio de servidor muy rápido " +
             "puede traer datos atrasados. (Este aviso se repite cada 5 min mientras siga pasando.)"
@@ -188,7 +208,7 @@ object CrossServerCoordinator {
         val srv = servidor ?: return
         srv.execute {
             val texto = Text.literal(
-                "§c[GUARD] §fRedis " + (if (cuota) "agotó la cuota del mes" else "no responde") +
+                "§c[GUARD] §f$nombreBackend " + (if (cuota) "agotó la cuota del mes" else "no responde") +
                 ". §7La protección entre servidores está degradada; revisa la consola."
             )
             for (p in srv.playerManager.playerList) {
@@ -200,7 +220,7 @@ object CrossServerCoordinator {
     /**
      * Qué hacer cuando no se puede preguntar a Redis si otro backend tiene al jugador.
      *
-     * Antes se dejaba entrar al instante. Pero justo en un cambio de servidor el otro backend
+     * No se deja entrar al instante: justo en un cambio de servidor el otro backend
      * está guardando en ese momento, y cargar sin esperar es leer la fila vieja. Sin Redis no
      * hay forma de saberlo, así que se le da un margen fijo ([GuardConfig.esperaSinRedisMs])
      * antes de cargar. No se expulsa: si Redis queda caído un mes, expulsar sería dejar a todos
@@ -223,11 +243,12 @@ object CrossServerCoordinator {
     fun close() {
         runCatching { pool?.close() }
         pool = null
+        MySqlLocks.close()
         claimedHere.clear()
     }
 
     /**
-     * Espera (bloqueante — llamar SIEMPRE fuera del hilo del servidor) a que el lock del
+     * Espera (bloqueante: llamar SIEMPRE fuera del hilo del servidor) a que el lock del
      * jugador quede libre, hasta [GuardConfig.crossServerWaitTimeoutMs]. Si ya está libre, o
      * la coordinación está desactivada, retorna al instante. Si Redis no responde, espera
      * [GuardConfig.esperaSinRedisMs] y deja seguir (ver [esperarSinRedis]).
@@ -236,6 +257,7 @@ object CrossServerCoordinator {
      */
     fun awaitRelease(uuid: UUID, playerName: String): Boolean {
         if (!isEnabled()) return true
+        if (usaMysql) return awaitReleaseMysql(uuid, playerName)
         val jedisPool = poolOReconectar() ?: return esperarSinRedis(playerName, "sin conexión")
 
         val deadline = System.currentTimeMillis() + cfg.crossServerWaitTimeoutMs
@@ -243,13 +265,12 @@ object CrossServerCoordinator {
         try {
             while (true) {
                 // IMPORTANTE: la conexión se toma y se SUELTA en cada vuelta del poll.
-                // Antes el `use { }` envolvía todo el bucle, así que la conexión quedaba
-                // retenida mientras el hilo dormía (hasta crossServerWaitTimeoutMs, 8s por
-                // defecto). Con maxTotal=8 en el pool de Jedis, bastaban 9 jugadores
-                // entrando a la vez —justo lo que pasa al reiniciar el proxy o un backend—
-                // para agotar el pool: los siguientes se bloqueaban esperando recurso o
-                // reventaban con JedisExhaustedPoolException. Dormir NO requiere tener una
-                // conexión tomada.
+                // El `use { }` no envuelve todo el bucle: la conexión quedaría retenida
+                // mientras el hilo duerme (hasta crossServerWaitTimeoutMs, 8 s por defecto).
+                // Con maxTotal=8 en el pool de Jedis, bastarían 9 jugadores entrando a la vez
+                // (justo lo que pasa al reiniciar el proxy o un backend) para agotar el pool:
+                // los siguientes se bloquearían esperando recurso o reventarían con
+                // JedisExhaustedPoolException. Dormir NO requiere tener una conexión tomada.
                 val owner = conRedis(jedisPool) { jedis -> jedis.get(lockKey(uuid)) }
                 if (owner == null || owner == cfg.serverId) return true
 
@@ -273,14 +294,43 @@ object CrossServerCoordinator {
         }
     }
 
+    /** awaitRelease contra MySQL: mismo bucle (100 ms → 500 ms) y mismo timeout que con Redis. */
+    private fun awaitReleaseMysql(uuid: UUID, playerName: String): Boolean {
+        if (!mysqlOReconectar()) return esperarSinRedis(playerName, "sin conexión")
+        val deadline = System.currentTimeMillis() + cfg.crossServerWaitTimeoutMs
+        var pollIntervalMs = 100L
+        try {
+            while (true) {
+                val owner = MySqlLocks.dueño(uuid)
+                if (owner == null || owner == cfg.serverId) return true
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) {
+                    CobblemonGuard.logger.warn(
+                        "[CrossServer] Timeout esperando liberación del lock de $playerName " +
+                        "(retenido por backend '$owner') tras ${cfg.crossServerWaitTimeoutMs}ms — " +
+                        "se deja entrar de todas formas para no trancarlo."
+                    )
+                    return false
+                }
+                Thread.sleep(minOf(pollIntervalMs, remaining))
+                pollIntervalMs = (pollIntervalMs * 2).coerceAtMost(500L)
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return true
+        } catch (e: Exception) {
+            return esperarSinRedis(playerName, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
     /** Reclama el lock para ESTE backend (llamar justo después de terminar de cargar al jugador). */
     /**
-     * Toma el lock SOLO si está libre o ya es de este backend. Antes era un SET a secas, y un
-     * claim que llegaba tarde (Redis lento, cola del hilo de Redis) podía pisar el lock que otro
-     * backend acababa de tomar legítimamente: el jugador ya se había pasado a ese otro, el otro lo
-     * había cargado y reclamado, y este SET atrasado lo dejaba a nombre de un backend donde el
-     * jugador ya no estaba. Ninguno de los dos lo renovaba y el lock caducaba con el jugador
-     * jugando: al pasar al siguiente backend, ese no esperaba su guardado.
+     * Toma el lock SOLO si está libre o ya es de este backend. Con un SET a secas, un claim que
+     * llega tarde (Redis lento, cola del hilo de Redis) podría pisar el lock que otro backend
+     * acaba de tomar legítimamente: el jugador ya se pasó a ese otro, el otro lo cargó y lo
+     * reclamó, y este SET atrasado lo dejaría a nombre de un backend donde el jugador ya no está.
+     * Ninguno de los dos lo renovaría y el lock caducaría con el jugador jugando: al pasar al
+     * siguiente backend, ese no esperaría su guardado.
      */
     private val CLAIM_IF_FREE_OR_MINE = """
         local actual = redis.call('GET', KEYS[1])
@@ -294,9 +344,12 @@ object CrossServerCoordinator {
 
     fun claim(uuid: UUID) {
         if (!isEnabled()) return
-        val jedisPool = poolOReconectar() ?: return
+        if (usaMysql && !mysqlOReconectar()) return
+        val jedisPool = if (usaMysql) null else (poolOReconectar() ?: return)
         try {
-            val tomado = conRedis(jedisPool) { jedis ->
+            val tomado = if (jedisPool == null) {
+                if (MySqlLocks.claim(uuid, cfg.serverId, cfg.crossServerLockTtlSeconds)) 1L else 0L
+            } else conRedis(jedisPool) { jedis ->
                 jedis.eval(
                     CLAIM_IF_FREE_OR_MINE,
                     listOf(lockKey(uuid)),
@@ -319,18 +372,19 @@ object CrossServerCoordinator {
     /** Qué backend tiene el lock de [uuid] ahora, o null si nadie (o si no se puede saber). */
     fun dueñoActual(uuid: UUID): String? {
         if (!isEnabled()) return null
+        if (usaMysql) return if (MySqlLocks.isConnected()) runCatching { MySqlLocks.dueño(uuid) }.getOrNull() else null
         val jedisPool = pool ?: return null
         return runCatching { conRedis(jedisPool) { jedis -> jedis.get(lockKey(uuid)) } }.getOrNull()
     }
 
-    // Renueva el TTL SOLO si seguimos siendo el dueño, de forma atómica (antes eran un GET
+    // Renueva el TTL SOLO si seguimos siendo el dueño, de forma atómica (no un GET
     // y un EXPIRE separados: entre ambos otro backend podía tomar el lock y le
     // renovábamos el TTL a un lock ajeno).
     //
     // Un solo script para TODOS los locks del backend: recibe todas las llaves y devuelve una
-    // lista de 1/0 en el mismo orden. Antes era un EVAL por jugador (en pipeline): un solo viaje
-    // de red, pero N comandos, y Upstash cobra por comando — con 20 jugadores conectados todo
-    // el día eran más de 3 millones al mes. Ahora es 1 comando por backend cada 15 s, haya los
+    // lista de 1/0 en el mismo orden. Un EVAL por jugador (en pipeline) sería un solo viaje
+    // de red pero N comandos, y Upstash cobra por comando: con 20 jugadores conectados todo
+    // el día son más de 3 millones al mes. Así es 1 comando por backend cada 15 s, haya los
     // jugadores que haya.
     private val RENEW_ALL_IF_OWNER = """
         local res = {}
@@ -357,28 +411,29 @@ object CrossServerCoordinator {
      */
     fun heartbeatAll(sigueAqui: (UUID) -> Boolean = { true }) {
         if (!isEnabled() || claimedHere.isEmpty()) return
-        val jedisPool = pool ?: return
+        val jedisPool = if (usaMysql) null else (pool ?: return)
+        if (usaMysql && !MySqlLocks.isConnected()) return
 
         // Solo se le renueva el TTL a quien SIGUE vinculado a este backend. Un lock de un
-        // jugador que ya no esta aca es un lock huerfano: paso por el camino de "el guardado
-        // fallo, no soltamos el lock", y no hay nada en vuelo que lo vaya a soltar despues.
-        // Renovarselo cada 15 s lo volvia eterno, y eso no es proteccion: es un baneo. El
+        // jugador que ya no está acá es un lock huérfano: pasó por el camino de "el guardado
+        // falló, no soltamos el lock", y no hay nada en vuelo que lo vaya a soltar despues.
+        // Renovarselo cada 15 s lo volvía eterno, y eso no es protección: es un baneo. El
         // jugador quedaba expulsado de TODOS los backends hasta que un admin corriera
-        // /cg unlock, y nada se lo decia a nadie.
+        // /cg unlock, y nada se lo decía a nadie.
         //
         // Dejando de renovarlo, el lock caduca solo en crossServerLockTtlSeconds. La ventana
         // sigue protegiendo lo que tiene que proteger (que nadie cargue mientras el otro
         // backend escribe), pero es una ventana y no una condena.
         //
         // Hacen falta AUSENCIAS_PARA_SOLTAR pasadas seguidas, no una. [sigueAqui] se arma en
-        // el hilo del servidor y esta tarea corre despues, en el dbExecutor, que tiene cola
+        // el hilo del servidor y esta tarea corre después, en el dbExecutor, que tiene cola
         // ilimitada: tras un reinicio del proxy, con decenas de joins encolando claim() y
         // logSync(), esta tarea puede esperar segundos. En esa ventana un jugador entra y
-        // claim() lo mete en claimedHere — y como no estaba en el snapshot, con una sola
-        // pasada se lo declaraba huerfano y se le cortaba el heartbeat a un jugador que esta
-        // jugando aca. El lock le caducaba en mitad de la sesion y nadie lo volvia a reclamar:
-        // si despues el proxy lo movia, el otro backend leia MySQL sin esperar el guardado de
-        // este. Un UUID que aparecio tarde se salva porque la proxima pasada ya lo ve.
+        // claim() lo mete en claimedHere, y como no estaba en el snapshot, con una sola
+        // pasada se lo declaraba huérfano y se le cortaba el heartbeat a un jugador que está
+        // jugando acá. El lock le caducaba en mitad de la sesión y nadie lo volvía a reclamar:
+        // si después el proxy lo movía, el otro backend leía MySQL sin esperar el guardado de
+        // este. Un UUID que apareció tarde se salva porque la próxima pasada ya lo ve.
         for (uuid in claimedHere) {
             if (sigueAqui(uuid)) ausencias.remove(uuid)
         }
@@ -389,9 +444,9 @@ object CrossServerCoordinator {
             claimedHere.removeAll(huerfanos.toSet())
             huerfanos.forEach { ausencias.remove(it) }
             CobblemonGuard.logger.warn(
-                "[CrossServer] ${huerfanos.size} lock(s) sin jugador online aca: ${huerfanos.joinToString(", ")}. " +
+                "[CrossServer] ${huerfanos.size} lock(s) sin jugador online acá: ${huerfanos.joinToString(", ")}. " +
                 "Se deja de renovarlos; caducan solos en ${cfg.crossServerLockTtlSeconds}s. " +
-                "Casi siempre esto significa que su guardado en MySQL fallo: revisa los [SAVE] de arriba. " +
+                "Casi siempre esto significa que su guardado en MySQL falló: revisa los [SAVE] de arriba. " +
                 "Si alguno necesita entrar YA, /cg unlock <jugador>."
             )
         }
@@ -401,6 +456,14 @@ object CrossServerCoordinator {
         if (uuids.isEmpty()) return
         val ttl = cfg.crossServerLockTtlSeconds.toString()
         try {
+            if (jedisPool == null) {
+                // MySQL: una UPDATE + un SELECT por tanda, haya los jugadores que haya.
+                for (tanda in uuids.chunked(LLAVES_POR_RENOVACION)) {
+                    val siguen = MySqlLocks.renovar(tanda, cfg.serverId, cfg.crossServerLockTtlSeconds)
+                    tanda.forEach { if (it !in siguen) claimedHere.remove(it) }
+                }
+                return
+            }
             for (tanda in uuids.chunked(LLAVES_POR_RENOVACION)) {
                 val respuesta = conRedis(jedisPool) { jedis ->
                     jedis.eval(RENEW_ALL_IF_OWNER, tanda.map { lockKey(it) }, listOf(cfg.serverId, ttl))
@@ -440,6 +503,10 @@ object CrossServerCoordinator {
      */
     fun otroEsDueño(uuid: UUID): Boolean {
         if (!isEnabled()) return false
+        if (usaMysql) {
+            if (!MySqlLocks.isConnected()) return false
+            return runCatching { MySqlLocks.dueño(uuid).let { it != null && it != cfg.serverId } }.getOrDefault(false)
+        }
         val jedisPool = pool ?: return false
         return runCatching {
             val owner = conRedis(jedisPool) { jedis -> jedis.get(lockKey(uuid)) }
@@ -448,13 +515,19 @@ object CrossServerCoordinator {
     }
 
     /**
-     * Libera el lock de [uuid] — llamar SOLO después de confirmar que el guardado en
+     * Libera el lock de [uuid]: llamar SOLO después de confirmar que el guardado en
      * MySQL terminó exitosamente (si liberamos antes y el guardado falla, el otro
      * backend podría cargar datos viejos).
      */
     fun release(uuid: UUID) {
         claimedHere.remove(uuid)
         if (!isEnabled()) return
+        if (usaMysql) {
+            if (!MySqlLocks.isConnected()) return
+            runCatching { MySqlLocks.release(uuid, cfg.serverId) }
+                .onFailure { CobblemonGuard.logger.warn("[CrossServer] No se pudo liberar el lock de $uuid: ${it.message}") }
+            return
+        }
         val jedisPool = pool ?: return
         try {
             conRedis(jedisPool) { jedis ->
@@ -474,10 +547,16 @@ object CrossServerCoordinator {
         }
     }
 
-    /** Libera SIN chequear dueño — solo para /cg saving stop o limpieza administrativa. */
+    /** Libera SIN chequear dueño: solo para /cg saving stop o limpieza administrativa. */
     fun forceRelease(uuid: UUID) {
         claimedHere.remove(uuid)
         if (!isEnabled()) return
+        if (usaMysql) {
+            if (!MySqlLocks.isConnected()) return
+            runCatching { MySqlLocks.forceRelease(uuid) }
+                .onFailure { CobblemonGuard.logger.warn("[CrossServer] No se pudo forzar la liberación del lock de $uuid: ${it.message}") }
+            return
+        }
         val jedisPool = pool ?: return
         try {
             conRedis(jedisPool) { jedis -> jedis.del(lockKey(uuid)) }
