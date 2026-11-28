@@ -31,6 +31,3 @@ run/
 
 # ── Documentación interna: se queda solo en local ──
 *.md
-
-# Documentaci�n interna, solo local
-*.md

@@ -223,6 +223,12 @@ data class GuardConfig(
     // Null (config viejo) = "mysql".
     val lockBackend: String? = null,
 
+    // Con lockBackend "mysql": avisar por Redis/Valkey (redisHost, redisPort, redisUsername,
+    // redisPassword, redisSsl) cuando un backend suelta un lock, para que el que espera cargue al
+    // jugador en ese momento en vez de esperar al siguiente sondeo de MySQL. Los locks siguen
+    // SOLO en MySQL; si Redis falla, todo sigue igual. Null (config viejo) = false.
+    val avisosLockRedis: Boolean? = null,
+
     // Sync en vivo de PASTURAS (ranchos) en redes multi-backend
     // Las pasturas de Cobblemon acceden a la PC del dueño DIRECTO por UUID
     // (Cobblemon.storage.getPC(uuid, registryAccess)), sin pasar por join/disconnect,
@@ -266,6 +272,9 @@ data class GuardConfig(
     val dbMonitorSondaSegundosEffective: Int get() = (dbMonitorSondaSegundos ?: 30).coerceIn(5, 3600)
 
     val esperaSinRedisMsEffective: Long get() = (esperaSinRedisMs ?: 5_000L).coerceIn(0L, 30_000L)
+
+    /** Ver doc de [avisosLockRedis]. Úsalo SIEMPRE en vez del campo directo. */
+    val avisosLockRedisEffective: Boolean get() = avisosLockRedis ?: false
 
     /** "mysql" o "redis". Ver doc de [lockBackend]. Úsalo SIEMPRE en vez del campo directo. */
     val lockBackendEffective: String get() = if (lockBackend?.trim()?.lowercase() == "redis") "redis" else "mysql"

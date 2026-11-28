@@ -99,6 +99,7 @@ object CrossServerCoordinator {
             if (MySqlLocks.connect()) {
                 CobblemonGuard.logger.info("[CrossServer] Coordinación por MySQL (sin Redis) — serverId='${cfg.serverId}'.")
             }
+            LockAvisos.iniciar()
             return
         }
         // Dos hilos pueden pasar a la vez el filtro de tiempo de poolOReconectar y llegar acá
@@ -243,6 +244,7 @@ object CrossServerCoordinator {
     fun close() {
         runCatching { pool?.close() }
         pool = null
+        LockAvisos.cerrar()
         MySqlLocks.close()
         claimedHere.clear()
     }
@@ -294,13 +296,18 @@ object CrossServerCoordinator {
         }
     }
 
-    /** awaitRelease contra MySQL: mismo bucle (100 ms → 500 ms) y mismo timeout que con Redis. */
+    /**
+     * awaitRelease contra MySQL: mismo bucle (100 ms → 500 ms) y mismo timeout que con Redis.
+     * Con [LockAvisos] andando, la espera se corta en cuanto el otro backend avisa que soltó el
+     * lock, y MySQL se vuelve a consultar cada [LockAvisos.RESPALDO_MS] solo como respaldo.
+     */
     private fun awaitReleaseMysql(uuid: UUID, playerName: String): Boolean {
         if (!mysqlOReconectar()) return esperarSinRedis(playerName, "sin conexión")
         val deadline = System.currentTimeMillis() + cfg.crossServerWaitTimeoutMs
         var pollIntervalMs = 100L
         try {
             while (true) {
+                val marca = LockAvisos.marca(uuid)
                 val owner = MySqlLocks.dueño(uuid)
                 if (owner == null || owner == cfg.serverId) return true
                 val remaining = deadline - System.currentTimeMillis()
@@ -312,14 +319,20 @@ object CrossServerCoordinator {
                     )
                     return false
                 }
-                Thread.sleep(minOf(pollIntervalMs, remaining))
-                pollIntervalMs = (pollIntervalMs * 2).coerceAtMost(500L)
+                if (LockAvisos.activo) {
+                    LockAvisos.esperar(uuid, marca, minOf(LockAvisos.RESPALDO_MS, remaining))
+                } else {
+                    Thread.sleep(minOf(pollIntervalMs, remaining))
+                    pollIntervalMs = (pollIntervalMs * 2).coerceAtMost(500L)
+                }
             }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             return true
         } catch (e: Exception) {
             return esperarSinRedis(playerName, e.message ?: e.javaClass.simpleName)
+        } finally {
+            LockAvisos.terminar(uuid)
         }
     }
 
@@ -525,6 +538,7 @@ object CrossServerCoordinator {
         if (usaMysql) {
             if (!MySqlLocks.isConnected()) return
             runCatching { MySqlLocks.release(uuid, cfg.serverId) }
+                .onSuccess { LockAvisos.publicar(uuid) }
                 .onFailure { CobblemonGuard.logger.warn("[CrossServer] No se pudo liberar el lock de $uuid: ${it.message}") }
             return
         }
@@ -554,6 +568,7 @@ object CrossServerCoordinator {
         if (usaMysql) {
             if (!MySqlLocks.isConnected()) return
             runCatching { MySqlLocks.forceRelease(uuid) }
+                .onSuccess { LockAvisos.publicar(uuid) }
                 .onFailure { CobblemonGuard.logger.warn("[CrossServer] No se pudo forzar la liberación del lock de $uuid: ${it.message}") }
             return
         }
